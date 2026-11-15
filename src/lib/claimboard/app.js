@@ -462,8 +462,83 @@ function vGrade(){
   </div></section>`;
 }
 
+/* ---------- shipping: export paid orders for Pirate Ship, then draft the shipped and delivered messages ---------- */
+const DAY = 86400000, KEEP_ADDR_DAYS = 60;
+function purgeAddresses(){
+  /* buyers' home addresses are wiped 60 days after an order ships */
+  for(const o of Object.values(S.orders || {})) if(o.addr && o.shippedAt && Date.now() - o.shippedAt > KEEP_ADDR_DAYS * DAY) o.addr = "";
+}
+function parseAddr(text){
+  let lines = String(text || "").split("\n").map(x => x.trim()).filter(Boolean);
+  if(lines.length === 1) lines = lines[0].split(",").map(x => x.trim()).filter(Boolean).reduce((a, x, i, all) => { if(i >= all.length - 2 && a.length > 2) a[a.length - 1] += ", " + x; else a.push(x); return a; }, []);
+  const m = lines.length >= 3 && lines[lines.length - 1].match(/^(.*?)[,\s]+([A-Za-z]{2})[,\s]+(\d{5}(?:-\d{4})?)$/);
+  if(!m) return null;
+  return {name: lines[0], a1: lines[1], a2: lines.slice(2, -1).join(" "), city: m[1].replace(/,$/, "").trim(), state: m[2].toUpperCase(), zip: m[3]};
+}
+function shipOrders(){
+  S.orders = S.orders || {};
+  const m = new Map();
+  S.cards.filter(c => c.status === "sold" && c.claimBy).forEach(c => { if(!m.has(c.claimBy)) m.set(c.claimBy, []); m.get(c.claimBy).push(c); });
+  return [...m].map(([user, cards]) => {
+    const o = S.orders[user] || {}, total = cards.reduce((a, c) => a + (c.soldPrice ?? priceOf(c) ?? 0), 0);
+    const pkg = o.pkg || (total < (Number(S.settings.pweMax) || 20) && cards.length <= 3 ? "pwe" : "mailer");
+    const oz = o.oz || (pkg === "pwe" ? 1 : Math.max(3, Math.round(2 + cards.length * 0.5)));
+    return {user, cards, o, total, pkg, oz, addr: parseAddr(o.addr)};
+  });
+}
+const csvCell = v => /[",\n]/.test(String(v ?? "")) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v ?? "");
+function shipCsv(list){
+  const head = ["Name","Company","Address 1","Address 2","City","State","Zip","Country","Order ID","Weight (oz)","Length","Width","Height","Description"];
+  const rows = list.map(x => [x.addr.name, "", x.addr.a1, x.addr.a2, x.addr.city, x.addr.state, x.addr.zip, "US", "u/" + x.user, x.oz, x.pkg === "pwe" ? "" : 9, x.pkg === "pwe" ? "" : 6, x.pkg === "pwe" ? "" : 0.5, x.cards.length + " trading card" + (x.cards.length === 1 ? "" : "s")]);
+  return [head, ...rows].map(r => r.map(csvCell).join(",")).join("\r\n");
+}
+function downloadText(name, text){
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], {type: "text/csv"})); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const compose = (user, subject, body) => `https://www.reddit.com/message/compose/?to=${encodeURIComponent(user)}&subject=${encodeURIComponent(subject)}&message=${encodeURIComponent(body)}`;
+function vShip(){
+  const list = shipOrders(), ready = list.filter(x => x.addr && !x.o.shippedAt);
+  const noBuyer = S.cards.filter(c => c.status === "sold" && !c.claimBy).length;
+  return `<section class="view">
+  <div class="panel"><h2>Paid orders</h2>
+    <p class="note">One order per buyer, built from the lots you marked paid. Paste the address from the PayPal note, export the batch, and buy the labels in Pirate Ship. Addresses are wiped ${KEEP_ADDR_DAYS} days after an order ships.</p>
+    <div class="row">
+      <label class="inline">Plain envelope for orders under $<input class="money" id="set-pweMax" inputmode="decimal" value="${esc(S.settings.pweMax ?? 20)}" style="width:64px"></label>
+      <button class="primary" data-act="csv" ${ready.length ? "" : "disabled"}>Download ${ready.length || ""} order${ready.length === 1 ? "" : "s"} for Pirate Ship</button>
+    </div>
+    <p class="note">The file is a standard spreadsheet (name, address, weight, size). Pirate Ship asks you to match the columns the first time you import one.</p>
+    ${noBuyer ? `<p class="flag">${noBuyer} sold lot${noBuyer === 1 ? " has" : "s have"} no buyer set, so ${noBuyer === 1 ? "it is" : "they are"} not in an order. Add the buyer on the Claims tab.</p>` : ""}
+    ${list.length ? "" : `<p class="note">No paid orders yet. Mark a lot "Paid, sold" on the Claims tab and it appears here.</p>`}
+  </div>
+  ${list.map((x, i) => {
+    const u = esc(x.user), items = x.cards.map(title).join("; ");
+    const trackUrl = x.o.tracking ? "https://tools.usps.com/go/TrackConfirmAction?tLabels=" + encodeURIComponent(x.o.tracking) : "";
+    const shipped = `Hi u/${x.user}, your cards shipped${x.o.tracking ? ". Tracking: " + x.o.tracking + "\n" + trackUrl : x.pkg === "pwe" ? " by plain envelope, so there is no tracking number." : "."}\n\nIn the package: ${items}\n\nLet me know when they land.`;
+    const delivered = `Hi u/${x.user}, ${x.o.tracking ? "tracking shows your cards were delivered" : "your cards should have arrived by now"}. I hope they look great in hand. If everything is right, feedback on r/SportsCardTracker is appreciated, and I will leave yours too.`;
+    return `<div class="panel">
+      <div class="row" style="justify-content:space-between"><h2>u/${u} <span class="note">${x.cards.length} lot${x.cards.length === 1 ? "" : "s"}, ${money(x.total)}</span></h2>
+        ${x.o.delivered ? `<span class="chip ok">delivered</span>` : x.o.shippedAt ? `<span class="chip ok">shipped ${new Date(x.o.shippedAt).toLocaleDateString([], {month:"short", day:"numeric"})}</span>` : `<span class="chip">to ship</span>`}</div>
+      <p class="meta">${esc(items)}</p>
+      <div class="two">
+        <label>Ship to (paste from the PayPal note)<textarea data-o="${u}" data-of="addr" style="min-height:92px;font-family:var(--body)" placeholder="Name&#10;Street&#10;City, ST 12345">${esc(x.o.addr || "")}</textarea>
+          ${x.o.addr && !x.addr ? `<span class="chip warn" style="align-self:flex-start">Could not read this. Use name, street, then city, state and ZIP on separate lines.</span>` : x.addr ? `<span class="note">${esc([x.addr.name, x.addr.a1, x.addr.a2, x.addr.city + ", " + x.addr.state + " " + x.addr.zip].filter(Boolean).join(" · "))}</span>` : ""}</label>
+        <div class="row" style="align-items:flex-end">
+          <label>Package<select data-o="${u}" data-of="pkg"><option value="pwe" ${x.pkg === "pwe" ? "selected" : ""}>Plain envelope</option><option value="mailer" ${x.pkg === "mailer" ? "selected" : ""}>Bubble mailer, tracked</option></select></label>
+          <label>Weight, oz<input class="money" data-o="${u}" data-of="oz" inputmode="decimal" value="${x.oz}" style="width:64px"></label>
+          <label class="grow">Tracking number<input data-o="${u}" data-of="tracking" value="${esc(x.o.tracking || "")}" placeholder="Paste after buying the label"></label>
+          ${x.o.shippedAt ? "" : `<button class="small" data-act="shipped" data-o="${u}">Mark shipped</button>`}
+          ${x.o.shippedAt && !x.o.delivered ? `<button class="small" data-act="delivered" data-o="${u}">Mark delivered</button>` : ""}
+        </div>
+      </div>
+      ${x.o.shippedAt ? `<h3>${x.o.delivered ? "Delivered message" : "Shipped message"}</h3><textarea id="sm-${i}" style="min-height:110px;font-family:var(--body)">${esc(x.o.delivered ? delivered : shipped)}</textarea>
+      <div class="row"><button class="small" data-copy="sm-${i}">Copy</button><a class="btn small" target="_blank" rel="noopener" href="${esc(compose(x.user, x.o.delivered ? "Your cards were delivered" : "Your cards shipped", x.o.delivered ? delivered : shipped))}">Open a prefilled Reddit message</a>${trackUrl ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(trackUrl)}">Check USPS tracking</a>` : ""}</div>` : ""}
+    </div>`; }).join("")}
+  </section>`;
+}
+
 /* ---------- render + events ---------- */
-const VIEWS = {inventory:vInventory, post:vPost, claims:vClaims, sold:vSold, grade:vGrade, radar:vRadar};
+const VIEWS = {inventory:vInventory, post:vPost, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
   const name = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "inventory";
   document.querySelectorAll("#nav a").forEach(a => a.getAttribute("href") === "#" + name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
@@ -491,6 +566,8 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "gclear"){ S.grades = []; }
+  else if(act === "csv"){ const ready = shipOrders().filter(x => x.addr && !x.o.shippedAt); if(ready.length) downloadText("claimboard-orders-" + new Date().toISOString().slice(0, 10) + ".csv", shipCsv(ready)); return; }
+  else if(act === "shipped" || act === "delivered"){ const o = (S.orders = S.orders || {})[el.dataset.o] = S.orders[el.dataset.o] || {}; if(act === "shipped") o.shippedAt = Date.now(); else o.delivered = true; }
   else if(act === "loadCommunity"){ ui.community = null; ui.communityMsg = ""; return render(); }
   else if(act === "radarSave"){
     if(!cap.token){ ui.radarMsg = "Saved on this device. Sign in to send it."; }
@@ -504,6 +581,12 @@ document.addEventListener("change", e => {
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
   if(t.id === "g-hide"){ ui.hide = Math.max(0, Math.min(50, numOrNull(t.value) ?? 22)); return; }
+  if(t.dataset.o){
+    const o = (S.orders = S.orders || {})[t.dataset.o] = S.orders[t.dataset.o] || {}, f = t.dataset.of;
+    o[f] = f === "oz" ? numOrNull(t.value) : t.value.trim();
+    if(f === "tracking" && o.tracking && !o.shippedAt) o.shippedAt = Date.now();
+    save(); return render();
+  }
   if(t.dataset.p){ const p = ui.pending.find(x => x.id === t.dataset.p); if(p) p.truth = numOrNull(t.value); return; }
   if(t.id && t.id.startsWith("set-")){ const k = t.id.slice(4); S.settings[k] = t.type === "checkbox" ? t.checked : k === "discount" ? Math.max(0, Math.min(60, numOrNull(t.value) ?? 15)) : t.value; save(); return render(); }
   if(t.id && t.id.startsWith("rad-")){ S.radar[t.id.slice(4)] = t.value; save(); return; }
@@ -524,5 +607,5 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-loadLocal(); render(); init(makeSupabase);
+loadLocal(); purgeAddresses(); render(); init(makeSupabase);
 }

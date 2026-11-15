@@ -9,6 +9,7 @@ Seller tools for r/baseballcards_vintage. Photograph a table of cards, get an in
 | Inventory | Reads cards from photos or a video sweep. A large photo is cut into full-detail crops first. Every card gets a price from an AI estimate, flagged as not a sold comp, until a real comp is entered. |
 | Post | Builds the title and a Reddit markdown table in the sort order chosen. |
 | Claims | Matches pasted thread comments to lots in posted order, then drafts the thread reply and the DM per buyer. The seller sends them; nothing is sent automatically. |
+| Ship | Groups paid lots into one order per buyer, exports them as a spreadsheet for Pirate Ship, and drafts the shipped and delivered messages. Buyer addresses are wiped 60 days after an order ships. |
 | Sold comps | Logs each paid sale. Sellers can opt in to a shared index of sold prices with no usernames. |
 | Grade test | Predicts the grade of slabbed cards with the label cropped out and scores the predictions against the label. |
 | Deal radar | Concept preview with invented example signals, plus a form that collects what testers want hunted. |

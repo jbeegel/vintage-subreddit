@@ -27,6 +27,7 @@ export default function Claimboard() {
         <a href="#claims">
           Claims<span className="n" id="n-claims" />
         </a>
+        <a href="#ship">Ship</a>
         <a href="#sold">Sold comps</a>
         <a href="#grade">Grade test</a>
         <a href="#radar">Deal radar</a>
