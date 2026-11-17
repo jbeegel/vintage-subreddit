@@ -392,10 +392,10 @@ function claimDrafts(){
       <div class="ttl">u/${esc(user)} <span class="note">${cards.length} lot${cards.length === 1 ? "" : "s"}, ${money(total)} with shipping</span></div>
       <h3>Reply in the thread</h3><textarea id="rp-${i}" style="min-height:48px">${esc(reply)}</textarea>
       <h3>Direct message</h3><textarea id="dm-${i}" style="min-height:190px">${esc(dm)}</textarea>
-      <div class="row"><button class="small" data-copy="rp-${i}">Copy reply</button><button class="small" data-copy="dm-${i}">Copy DM</button><a class="btn small" target="_blank" rel="noopener" href="${esc(href)}">Open a prefilled Reddit message</a></div></div>`;
+      <div class="row"><button class="small" data-copy="rp-${i}">Copy reply</button><button class="small" data-copy="dm-${i}">Copy DM</button><button class="small" data-act="paid" data-o="${esc(user)}">Mark paid</button><a class="btn small" target="_blank" rel="noopener" href="${esc(href)}">Open a prefilled Reddit message</a></div></div>`;
   }).join("");
   return `<div class="panel"><h2>Replies and DMs</h2>
-    <p class="note">One draft per buyer, with their lots added up. Nothing is sent for you: copy it, or open the prefilled Reddit message and press send.</p>
+    <p class="note">One draft per buyer, with their lots added up. Nothing is sent for you: copy it, or open the prefilled Reddit message and press send. When the payment lands, press Mark paid and the order moves to the Ship tab.</p>
     <div class="row">
       <label class="grow">Your PayPal address or PayPal.me link<input id="set-paypal" value="${esc(st.paypal)}" placeholder="name@example.com"></label>
       <label>Shipping per order<input class="money" id="set-shipFee" inputmode="decimal" value="${esc(st.shipFee)}"></label>
@@ -566,6 +566,13 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "gclear"){ S.grades = []; }
+  else if(act === "paid"){
+    S.cards.filter(c => c.status === "claimed" && c.claimBy === el.dataset.o).forEach(c => {
+      c.status = "sold"; c.soldPrice = c.soldPrice ?? priceOf(c); c.soldAt = Date.now();
+      S.solds = S.solds.filter(s => s.cardId !== c.id);
+      if(c.soldPrice != null && !c.example) S.solds.unshift({cardId:c.id, year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, price:c.soldPrice, date:c.soldAt});
+    });
+  }
   else if(act === "csv"){ const ready = shipOrders().filter(x => x.addr && !x.o.shippedAt); if(ready.length) downloadText("claimboard-orders-" + new Date().toISOString().slice(0, 10) + ".csv", shipCsv(ready)); return; }
   else if(act === "shipped" || act === "delivered"){ const o = (S.orders = S.orders || {})[el.dataset.o] = S.orders[el.dataset.o] || {}; if(act === "shipped") o.shippedAt = Date.now(); else o.delivered = true; }
   else if(act === "loadCommunity"){ ui.community = null; ui.communityMsg = ""; return render(); }
