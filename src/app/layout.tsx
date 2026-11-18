@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Claimboard",
+  title: "Reddit Sales Tool",
   description: "Seller tools for vintage baseball card sales on Reddit: bulk scan, price, post and track claims.",
   robots: { index: false, follow: false },
 };

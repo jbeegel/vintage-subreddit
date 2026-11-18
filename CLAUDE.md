@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Claimboard: seller tools for r/baseballcards_vintage. Read `README.md` first.
+Reddit Sales Tool: seller tools for r/baseballcards_vintage. Read `README.md` first.
 
 - Package manager is pnpm. `pnpm lint` and `pnpm build` must stay green.
 - Never present an AI price estimate as a sold comp, and label all example or concept data.

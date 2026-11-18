@@ -1,4 +1,4 @@
-# Claimboard
+# Reddit Sales Tool
 
 Seller tools for r/baseballcards_vintage. Photograph a table of cards, get an inventory with prices, build the sale post, handle claims, and test the grader against real slabs.
 

@@ -14,7 +14,7 @@ export default function Claimboard() {
     <div className="wrap">
       <header className="top">
         <h1>
-          Claim<span>board</span>
+          Reddit <span>Sales Tool</span>
         </h1>
         <p className="sub">Scan a table of vintage cards, price them, build the sale post, track claims.</p>
         <div id="auth" className="row" style={{ marginLeft: "auto" }} />

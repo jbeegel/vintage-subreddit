@@ -712,7 +712,7 @@ document.addEventListener("click", async e => {
       if(c.soldPrice != null && !c.example) S.solds.unshift({cardId:c.id, year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, price:c.soldPrice, date:c.soldAt});
     });
   }
-  else if(act === "csv"){ const ready = shipOrders().filter(x => x.addr && !x.o.shippedAt); if(ready.length) downloadText("claimboard-orders-" + new Date().toISOString().slice(0, 10) + ".csv", shipCsv(ready)); return; }
+  else if(act === "csv"){ const ready = shipOrders().filter(x => x.addr && !x.o.shippedAt); if(ready.length) downloadText("reddit-sales-orders-" + new Date().toISOString().slice(0, 10) + ".csv", shipCsv(ready)); return; }
   else if(act === "shipped" || act === "delivered"){ const o = (S.orders = S.orders || {})[el.dataset.o] = S.orders[el.dataset.o] || {}; if(act === "shipped") o.shippedAt = Date.now(); else o.delivered = true; }
   else if(act === "loadCommunity"){ ui.community = null; ui.communityMsg = ""; return render(); }
   else if(act === "radarSave"){

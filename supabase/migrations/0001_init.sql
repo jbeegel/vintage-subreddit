@@ -1,4 +1,4 @@
--- Claimboard schema. Run once in the Supabase SQL editor.
+-- Reddit Sales Tool schema. Run once in the Supabase SQL editor.
 -- Row level security is on for every table and no policies are defined, so the
 -- browser can never read or write these tables directly. All access goes through
 -- the app's server routes, which use the service role key.
