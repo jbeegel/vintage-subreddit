@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { claimsPrompt, gradePrompt, parseJson, scanPrompt, type Task } from "@/lib/server/prompts";
+import { claimsPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -30,12 +30,17 @@ export async function POST(req: Request) {
   const images = form.getAll("images").filter((f): f is File => f instanceof File);
   if (images.length > MAX_IMAGES) return fail(400, `At most ${MAX_IMAGES} images per request.`);
   if (images.some((f) => f.size > MAX_IMAGE_BYTES || f.type !== "image/jpeg")) return fail(400, "Images must be JPEG and under 2 MB each.");
-  if (task !== "claims" && images.length === 0) return fail(400, "No images were sent.");
+  if ((task === "scan" || task === "grade") && images.length === 0) return fail(400, "No images were sent.");
 
   let prompt: string;
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
-  else {
+  else if (task === "plan") {
+    const text = String(payload.text ?? "");
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!text || text.length > 4000 || rows.length < 2 || rows.length > 2000) return fail(400, "The plan is missing or the inventory is too large.");
+    prompt = planPrompt(text, rows);
+  } else {
     const text = String(payload.text ?? "");
     const lots = Array.isArray(payload.lots) ? payload.lots : [];
     if (!text || text.length > 40_000 || lots.length > 1000) return fail(400, "Thread text is missing or too long.");
@@ -66,7 +71,7 @@ export async function POST(req: Request) {
       max_tokens: 16000,
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      output_config: { effort: task === "claims" ? "medium" : "high" },
+      output_config: { effort: task === "claims" || task === "plan" ? "medium" : "high" },
       messages: [{ role: "user", content }],
     });
     if (message.stop_reason === "refusal") return fail(422, "The model declined this request.", "refused");

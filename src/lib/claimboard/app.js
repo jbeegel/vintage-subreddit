@@ -93,6 +93,8 @@ function ordered(){
   else if(k === "player") a.sort((x, y) => s(x.player, y.player) || (+x.year || 0) - (+y.year || 0));
   else if(k === "set") a.sort((x, y) => s(x.set, y.set) || (+x.year || 0) - (+y.year || 0) || (parseInt(x.num) || 0) - (parseInt(y.num) || 0));
   else if(k === "price") a.sort((x, y) => (priceOf(y) || 0) - (priceOf(x) || 0));
+  const secs = (S.plan && S.plan.sections) || [], si = c => { const i = secs.indexOf(c.section); return i < 0 ? secs.length : i; };
+  if(secs.length) a.sort((x, y) => si(x) - si(y));
   return a;
 }
 /* One big photo of a whole table: cut it into full-resolution crops so each card keeps its detail. */
@@ -201,6 +203,7 @@ function vInventory(){
     </div>
     <p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works: a large photo is cut into full-detail crops and each crop is read. Use your phone's highest resolution, shoot straight down, avoid glare.")}</p>
   </div>
+  ${planPanel()}
   ${hasEx ? `<p class="flag">These rows are examples, including the comp figures. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
   <div class="panel">
     <div class="row" style="justify-content:space-between">
@@ -222,6 +225,7 @@ function rowInv(c){
       <label>Sub price<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
     </div>
     <div class="links">
+      ${c.isLot ? `<span class="chip ok">lot of ${c.members.length}</span><button class="small" data-act="unlot">Break lot apart</button>` : ""}
       ${low ? `<span class="chip warn">low confidence ${Math.round((c.conf || 0) * 100)}%</span>` : ""}
       ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
       ${mid != null ? `<span class="chip" title="From the model's general knowledge. Not a sold comp.">${c.comp == null && c.price == null ? "Priced from AI estimate" : "AI estimate"} ${money(c.aiLow)} to ${money(c.aiHigh)}, not a sold comp</span>` : ""}
@@ -239,8 +243,9 @@ function buildPost(){
   const t = st.title.trim() || `[FS] ${names.join(", ")}${S.cards.length > 3 ? " and more" : ""} (${S.cards.length} lots)`;
   const comps = st.showComps && rows.some(c => c.comp != null);
   let b = (st.intro ? st.intro + "\n\n" : "") + `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\n`;
-  b += `| # | Card | Condition | Price |${comps ? " Recent comp |" : ""}\n|:-|:-|:-|:-|${comps ? ":-|" : ""}\n`;
+  const head = `| # | Card | Condition | Price |${comps ? " Recent comp |" : ""}\n|:-|:-|:-|:-|${comps ? ":-|" : ""}\n`;
   rows.forEach((c, i) => {
+    if(i === 0 || (c.section || "") !== (rows[i - 1].section || "")) b += (i ? "\n" : "") + (c.section ? "**" + c.section + "**\n\n" : "") + head;
     const cond = [c.grade, c.flaws].filter(Boolean).join(", ").replace(/\|/g, "/"), name = title(c).replace(/\|/g, "/");
     const pr = c.status === "sold" ? "**SOLD**" : c.status === "claimed" ? `${money(priceOf(c))} (pending)` : money(priceOf(c));
     b += `| ${i + 1} | ${c.status === "sold" ? "~~" + name + "~~" : name} | ${cond} | ${pr} |${comps ? " " + (c.comp != null ? money(c.comp) + (c.compSrc && c.compSrc !== "example" ? " " + c.compSrc : "") : "") + " |" : ""}\n`;
@@ -257,6 +262,7 @@ function vPost(){
     <label>Payment<input id="set-pay" value="${esc(st.pay)}"></label>
     <label>Shipping<input id="set-ship" value="${esc(st.ship)}"></label>
     <label class="inline"><input type="checkbox" id="set-showComps" ${st.showComps ? "checked" : ""}> Show the comp beside each price</label>
+    ${S.plan && S.plan.photos.length ? `<h3>Photos to take</h3><ol style="margin:0;padding-left:20px">${S.plan.photos.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
     <p class="note">Check the subreddit's current posting rules before you post. Title format and timestamp requirements are set by the mods, and this draft does not replace them.</p>
   </div>
   <div class="panel"><h2>Draft</h2>
@@ -373,6 +379,72 @@ function vRadar(){
     <label>Where you look today<input id="rad-sources" value="${esc(r.sources)}" placeholder="estate sale sites, local auctions, marketplace apps"></label>
     <div class="row"><button class="primary" data-act="radarSave">Send my hunt profile</button><span class="note">${esc(ui.radarMsg)}</span></div>
   </div></section>`;
+}
+
+/* ---------- sale plan: the seller describes the sale, the tool shapes singles, lots, title and photo list around it ---------- */
+const PRESETS = [
+  "A page or two of singles first, best cards up top. Everything else in lots, mostly by year.",
+  "All singles, highest price first.",
+  "Stars and Hall of Famers as singles. Commons bundled into lots by set and year.",
+  "Team lots where I have five or more of a team. Singles for the rest."
+];
+function unlotAll(){
+  const out = [];
+  for(const c of S.cards){ if(c.isLot && c.status === "open" && Array.isArray(c.members)) out.push(...c.members); else out.push(c); }
+  S.cards = out;
+}
+function applyPlan(r, text){
+  const open = new Map(S.cards.filter(c => c.status === "open").map(c => [c.id, c]));
+  const rest = S.cards.filter(c => c.status !== "open"), out = [], names = [];
+  const bundle = 1 - Number(S.settings.lotDiscount ?? 10) / 100;
+  for(const sec of (r.sections || [])){
+    const name = String(sec.name || "Cards"); names.push(name);
+    for(const id of (sec.rows || [])){ const c = open.get(id); if(c){ open.delete(id); c.section = name; out.push(c); } }
+    for(const lot of (sec.lots || [])){
+      const members = (lot.rows || []).map(id => { const c = open.get(id); if(c) open.delete(id); return c; }).filter(Boolean);
+      if(!members.length) continue;
+      if(members.length === 1){ members[0].section = name; out.push(members[0]); continue; }
+      const sum = members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = members.some(c => priceOf(c) == null);
+      out.push({id:uid(), status:"open", isLot:true, members, section:name, year:"", set:"", num:"", player:String(lot.name || "Lot") + " (" + members.length + " cards)", grade:String(lot.condition || ""), flaws:lot.highlights ? "includes " + lot.highlights : "", conf:1, comp:null, price: sum && !unpriced ? roundP(sum * bundle) : null});
+    }
+  }
+  if(open.size){ names.push("Other"); for(const c of open.values()){ c.section = "Other"; out.push(c); } }
+  S.cards = [...out, ...rest];
+  S.plan = {text, sections:names.filter((n, i) => names.indexOf(n) === i), photos:(r.photos || []).map(String), gaps:(r.gaps || []).map(String)};
+  if(r.title) S.settings.title = String(r.title);
+  if(r.intro) S.settings.intro = String(r.intro);
+  S.settings.sort = "added";
+}
+async function runPlan(){
+  const text = (($("#plantext") || {}).value || "").trim();
+  if(!text){ ui.planMsg = "Describe the sale first, or tap a starting point above."; return render(); }
+  if(!cap.ai){ ui.planMsg = aiOff(); return render(); }
+  ui.planDraft = text; ui.busy = ui.planMsg = "Sorting your cards into the plan"; render();
+  try{
+    unlotAll();
+    const rows = S.cards.filter(c => c.status === "open").map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c)}));
+    const r = await ai("plan", {text, rows});
+    applyPlan(r || {}, text);
+    const lots = S.cards.filter(c => c.isLot).length;
+    ui.planMsg = `Done: ${S.plan.sections.length} section${S.plan.sections.length === 1 ? "" : "s"}, ${lots} lot${lots === 1 ? "" : "s"}. Check the lots and prices below, then open the Post tab.`;
+    save();
+  }catch(e){ ui.planMsg = "Could not build the plan: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function planPanel(){
+  const p = S.plan, n = S.cards.filter(c => c.status === "open").length;
+  return `<div class="panel"><h2>Plan the sale</h2>
+    <p class="note">Say how you want to run it, in your own words. The tool sorts every open card into singles and lots to match, prices the lots, writes the title and opening lines, and lists the photos to take. Scan your cards first.</p>
+    <div class="row">${PRESETS.map((t, i) => `<button class="small" data-act="preset" data-i="${i}">${esc(t.split(".")[0])}</button>`).join("")}</div>
+    <textarea id="plantext" style="min-height:84px;font-family:var(--body)" placeholder="A page or two of singles, then everything else in lots, mostly by year but maybe some other groupings.">${esc(ui.planDraft ?? (p ? p.text : ""))}</textarea>
+    <div class="row"><button class="primary" data-act="plan" ${ui.busy || n < 2 ? "disabled" : ""}>${p ? "Rebuild the sale" : "Build the sale"}</button>
+      <label class="inline">Lots priced <input class="money" id="set-lotDiscount" type="number" min="0" max="60" value="${esc(S.settings.lotDiscount ?? 10)}" style="width:60px">% under the cards' total</label>
+      ${p ? `<button class="small" data-act="unplan">Undo plan</button>` : ""}</div>
+    ${ui.planMsg ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.planMsg)}</p>` : ""}
+    ${p ? `<h3>Sections</h3><p>${p.sections.map(s => esc(s) + " (" + S.cards.filter(c => c.section === s).length + ")").join(" · ")}</p>
+      ${p.photos.length ? `<h3>Photos to take</h3><ol style="margin:0;padding-left:20px">${p.photos.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
+      ${p.gaps.length ? `<p class="flag">${p.gaps.map(esc).join(" ")}</p>` : ""}` : ""}
+  </div>`;
 }
 
 /* ---------- claim assistant: drafts the public reply and the DM, the seller sends them ---------- */
@@ -565,6 +637,10 @@ document.addEventListener("click", async e => {
   else if(act === "clearEx"){ S.cards = S.cards.filter(x => !x.example); }
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
+  else if(act === "plan") return runPlan();
+  else if(act === "preset"){ ui.planDraft = PRESETS[+el.dataset.i]; return render(); }
+  else if(act === "unplan"){ unlotAll(); S.cards.forEach(x => { delete x.section; }); S.plan = null; ui.planMsg = ""; }
+  else if(act === "unlot" && c && c.isLot){ const i = S.cards.indexOf(c); S.cards.splice(i, 1, ...c.members); }
   else if(act === "gclear"){ S.grades = []; }
   else if(act === "paid"){
     S.cards.filter(c => c.status === "claimed" && c.claimBy === el.dataset.o).forEach(c => {
@@ -585,6 +661,7 @@ document.addEventListener("click", async e => {
 document.addEventListener("change", e => {
   const t = e.target;
   if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) scan(f); return; }
+  if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
   if(t.id === "g-hide"){ ui.hide = Math.max(0, Math.min(50, numOrNull(t.value) ?? 22)); return; }
