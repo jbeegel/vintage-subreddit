@@ -203,6 +203,7 @@ function vInventory(){
     </div>
     <p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works: a large photo is cut into full-detail crops and each crop is read. Use your phone's highest resolution, shoot straight down, avoid glare.")}</p>
   </div>
+  ${singlesPanel()}
   ${planPanel()}
   ${hasEx ? `<p class="flag">These rows are examples, including the comp figures. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
   <div class="panel">
@@ -226,6 +227,7 @@ function rowInv(c){
     </div>
     <div class="links">
       ${c.isLot ? `<span class="chip ok">lot of ${c.members.length}</span><button class="small" data-act="unlot">Break lot apart</button>` : ""}
+      ${c.pin === "single" ? `<span class="chip ok">set aside as a single</span>` : ""}
       ${low ? `<span class="chip warn">low confidence ${Math.round((c.conf || 0) * 100)}%</span>` : ""}
       ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
       ${mid != null ? `<span class="chip" title="From the model's general knowledge. Not a sold comp.">${c.comp == null && c.price == null ? "Priced from AI estimate" : "AI estimate"} ${money(c.aiLow)} to ${money(c.aiHigh)}, not a sold comp</span>` : ""}
@@ -381,6 +383,58 @@ function vRadar(){
   </div></section>`;
 }
 
+/* ---------- single suggestions: cards worth selling alone are pulled out for a one-tap decision ---------- */
+const singleMin = () => Number(S.settings.singleMin ?? 20) || 0;
+function singleCandidates(){
+  const min = singleMin(), out = [];
+  if(!min) return out;
+  for(const c of S.cards){
+    if(c.status !== "open") continue;
+    if(c.isLot){ for(const m of c.members || []) if(!m.pin && (priceOf(m) || 0) >= min) out.push({c:m, lot:c}); }
+    else if(!c.pin && !c.section && (priceOf(c) || 0) >= min) out.push({c});
+  }
+  return out;
+}
+function findCard(id){
+  for(const c of S.cards){ if(c.id === id) return {c}; if(c.isLot){ const m = (c.members || []).find(x => x.id === id); if(m) return {c:m, lot:c}; } }
+  return null;
+}
+function relot(lot){
+  const sum = lot.members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = lot.members.some(c => priceOf(c) == null);
+  lot.price = sum && !unpriced ? roundP(sum * (1 - Number(S.settings.lotDiscount ?? 10) / 100)) : null;
+  lot.player = lot.player.replace(/\(\d+ cards\)$/, "(" + lot.members.length + " cards)");
+}
+function setAside(id, choice){
+  const f = findCard(id); if(!f) return;
+  f.c.pin = choice;
+  if(choice !== "single" || !f.lot) return;
+  const lot = f.lot;
+  lot.members = lot.members.filter(m => m !== f.c);
+  let sec = "";
+  if(S.plan){
+    const firstSingle = S.cards.find(x => x.status === "open" && !x.isLot && x.section);
+    sec = firstSingle ? firstSingle.section : "Singles";
+    if(!S.plan.sections.includes(sec)) S.plan.sections.unshift(sec);
+  }
+  f.c.section = sec;
+  if(lot.members.length < 2){ lot.members.forEach(m => { m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
+  else relot(lot);
+  let at = -1; S.cards.forEach((x, k) => { if(!x.isLot && x.section === sec && x.status === "open") at = k; });
+  S.cards.splice(at + 1, 0, f.c);
+}
+function singlesPanel(){
+  if(!S.cards.some(c => c.status === "open")) return "";
+  const cs = singleCandidates(), min = singleMin();
+  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>Set aside as singles${cs.length ? ` <span class="note">${cs.length} suggested</span>` : ""}</h2>
+    <label class="inline">Suggest at $<input class="money" id="set-singleMin" inputmode="decimal" value="${esc(S.settings.singleMin ?? 20)}" style="width:64px"> and up</label></div>
+    ${cs.length ? `<p class="note">These are worth enough to sell on their own. Agree and the tool keeps them out of the lots.</p>
+    <ul class="cards">${cs.map(({c, lot}) => `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, lot ? "now in " + lot.player : c.where].filter(Boolean).join(" · "))}</div></div>
+      <div class="nums"><button class="primary" data-act="single">Make it a single</button><button class="small" data-act="keeplot">Keep in the lot</button></div></li>`).join("")}</ul>
+    ${cs.length > 1 ? `<div class="row"><button data-act="singleAll">Agree to all ${cs.length}</button></div>` : ""}`
+    : `<p class="note">No undecided cards at $${min} or more right now.</p>`}
+  </div>`;
+}
+
 /* ---------- sale plan: the seller describes the sale, the tool shapes singles, lots, title and photo list around it ---------- */
 const PRESETS = [
   "A page or two of singles first, best cards up top. Everything else in lots, mostly by year.",
@@ -395,18 +449,25 @@ function unlotAll(){
 }
 function applyPlan(r, text){
   const open = new Map(S.cards.filter(c => c.status === "open").map(c => [c.id, c]));
-  const rest = S.cards.filter(c => c.status !== "open"), out = [], names = [];
+  const rest = S.cards.filter(c => c.status !== "open"), out = [], names = [], pinned = [];
   const bundle = 1 - Number(S.settings.lotDiscount ?? 10) / 100;
   for(const sec of (r.sections || [])){
     const name = String(sec.name || "Cards"); names.push(name);
     for(const id of (sec.rows || [])){ const c = open.get(id); if(c){ open.delete(id); c.section = name; out.push(c); } }
     for(const lot of (sec.lots || [])){
       const members = (lot.rows || []).map(id => { const c = open.get(id); if(c) open.delete(id); return c; }).filter(Boolean);
+      const pulled = members.filter(c => c.pin === "single");
+      if(pulled.length){ pinned.push(...pulled); pulled.forEach(c => members.splice(members.indexOf(c), 1)); }
       if(!members.length) continue;
       if(members.length === 1){ members[0].section = name; out.push(members[0]); continue; }
       const sum = members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = members.some(c => priceOf(c) == null);
       out.push({id:uid(), status:"open", isLot:true, members, section:name, year:"", set:"", num:"", player:String(lot.name || "Lot") + " (" + members.length + " cards)", grade:String(lot.condition || ""), flaws:lot.highlights ? "includes " + lot.highlights : "", conf:1, comp:null, price: sum && !unpriced ? roundP(sum * bundle) : null});
     }
+  }
+  if(pinned.length){
+    const sec = names.find(n => out.some(c => !c.isLot && c.section === n)) || "Singles";
+    if(!names.includes(sec)) names.unshift(sec);
+    pinned.forEach(c => { c.section = sec; out.push(c); });
   }
   if(open.size){ names.push("Other"); for(const c of open.values()){ c.section = "Other"; out.push(c); } }
   S.cards = [...out, ...rest];
@@ -422,7 +483,7 @@ async function runPlan(){
   ui.planDraft = text; ui.busy = ui.planMsg = "Sorting your cards into the plan"; render();
   try{
     unlotAll();
-    const rows = S.cards.filter(c => c.status === "open").map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c)}));
+    const rows = S.cards.filter(c => c.status === "open").map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c), pin:c.pin || null}));
     const r = await ai("plan", {text, rows});
     applyPlan(r || {}, text);
     const lots = S.cards.filter(c => c.isLot).length;
@@ -638,6 +699,8 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "single" || act === "keeplot"){ const h = el.closest("[data-sid]"); if(h) setAside(h.dataset.sid, act === "single" ? "single" : "lot"); }
+  else if(act === "singleAll"){ singleCandidates().forEach(x => setAside(x.c.id, "single")); }
   else if(act === "preset"){ ui.planDraft = PRESETS[+el.dataset.i]; return render(); }
   else if(act === "unplan"){ unlotAll(); S.cards.forEach(x => { delete x.section; }); S.plan = null; ui.planMsg = ""; }
   else if(act === "unlot" && c && c.isLot){ const i = S.cards.indexOf(c); S.cards.splice(i, 1, ...c.members); }

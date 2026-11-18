@@ -39,11 +39,12 @@ export function planPrompt(text: string, rows: unknown): string {
 The seller's plan, in their own words:
 """${text}"""
 
-Inventory rows (id, card, grade, price in USD or null):
+Inventory rows (id, card, grade, price in USD or null, pin):
 ${JSON.stringify(rows)}
 
 Organise every row so the post carries out the plan.
 - Each row id appears exactly once: either in a section's "rows" (sold as a single) or inside exactly one lot. Never invent cards or ids.
+- A row with "pin":"single" must be sold as a single. A row with "pin":"lot" must go inside a lot.
 - A lot has at least two cards. Name it the way a collector would, e.g. "1960 Topps commons and minor stars". Give its condition range and up to five highlight players.
 - Order sections the way the plan says. Order singles by price, highest first, unless the plan says otherwise. "A page" of singles means roughly 9 to 18 cards.
 - If the plan is silent on something, choose what sells best: stars and Hall of Famers as singles, low-value commons bundled.
