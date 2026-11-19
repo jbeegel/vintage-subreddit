@@ -290,10 +290,12 @@ export function withReference(task: string, prompt: string, payload: Record<stri
   if (!REF_TASKS.has(task)) return prompt;
   const facts = String(payload.facts ?? "").slice(0, 8000).trim();
   const style = task === "postcopy" ? String(payload.style ?? "").slice(0, 3000).trim() : "";
+  const note = task === "scan" || task === "locate" ? String(payload.note ?? "").slice(0, 1500).trim() : "";
   return (
     prompt +
     (facts ? `\n\nReference notes from the seller's tool, a vetted hobby reference plus the seller's own notes. Trust them over memory where they apply, and still answer with only the JSON asked for above:\n${facts}` : "") +
-    (style ? `\n\nThe seller wants posts written in this style. Follow its structure, but asks stay firm and offers are never mentioned:\n${style}` : "")
+    (style ? `\n\nThe seller wants posts written in this style. Follow its structure, but asks stay firm and offers are never mentioned:\n${style}` : "") +
+    (note ? `\n\nThe seller describes what these photos show. Use it as guidance for identifying the cards, counts and groups, but trust what you see where the two disagree. Repeat any counts or lot details it gives in "notes":\n"""${note}"""` : "")
   );
 }
 

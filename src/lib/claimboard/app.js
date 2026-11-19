@@ -197,7 +197,7 @@ async function scan(files, opts){
       }
     };
     /* three requests at a time; each batch's cards show up in Review as soon as it finishes */
-    const worker = async () => { while(next < batches.length){ const batch = batches[next++]; const r = await ai("scan", {video: isVideo, tiled}, batch); take(r); done++; save(); render(); tick(); } };
+    const worker = async () => { while(next < batches.length){ const batch = batches[next++]; const r = await ai("scan", {video: isVideo, tiled, note:String(S.settings.scanNote || "")}, batch); take(r); done++; save(); render(); tick(); } };
     try{ await Promise.all(Array.from({length:Math.min(3, batches.length)}, worker)); } finally { clearInterval(timer); }
     S.imgSeen = [...(S.imgSeen || []), ...hashes.filter(Boolean).map(h => ({h, at:Date.now(), cards:added}))].slice(-400);
     ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"} in ${plural(Math.max(1, Math.round((Date.now() - t0) / 1000)), "second", "seconds")}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
@@ -220,6 +220,7 @@ function vInventory(){
   <div class="panel" data-jump="Add cards">
     <h2>${any ? "Add more cards" : "Scan your cards"}</h2>
     ${dupBox()}
+    <label>What are you uploading? Optional, and the scan follows it<textarea id="set-scanNote" style="min-height:64px;font-family:var(--body)" placeholder="Front and back of my 1969 Topps lot, about 120 cards. The slab is a PSA 7. Ignore the cards in the box on the left.">${esc(S.settings.scanNote || "")}</textarea></label>
     <div class="row">
       <input type="file" id="file" accept="image/*,video/*" multiple hidden>
       <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Take or choose photos</button>
@@ -234,6 +235,7 @@ function vInventory(){
   ${singlesPanel()}
   ${hasEx ? `<p class="flag">These rows are examples. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
   ${notesBox()}
+  ${allCardsPanel()}
   <div class="panel" id="decide" data-jump="To decide">
     <div class="row" style="justify-content:space-between"><h2>${ui.onlyCheck ? "Cards to check" : "To decide"} <span class="note">${list.length}</span></h2>
       <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
@@ -819,7 +821,7 @@ function setAside(id, choice){
   }
   if(!sec){ sec = "Singles"; ensureSection(sec); }
   f.c.section = sec;
-  if(lot.members.length < 2){ lot.members.forEach(m => { m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
+  if(lot.members.length < 2 && !(Number(lot.count) > 1)){ lot.members.forEach(m => { m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
   else relot(lot);
   let at = -1; S.cards.forEach((x, k) => { if(!x.isLot && x.section === sec && x.status === "open") at = k; });
   S.cards.splice(at + 1, 0, f.c);
@@ -1191,8 +1193,8 @@ function take(id){
   if(f.c.isLot){ S.cards = S.cards.filter(x => x !== f.c); f.c.members.forEach(m => { detach(m); delete m.section; }); return f.c.members; }
   if(f.lot){
     const lot = f.lot; lot.members = lot.members.filter(m => m !== f.c);
-    if(lot.members.length < 2){ lot.members.forEach(m => { detach(m); m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
-    else { if(lot.manual) describeLot(lot); relot(lot); }
+    if(lot.members.length < 2 && !(Number(lot.count) > 1)){ lot.members.forEach(m => { detach(m); m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
+    else { if(lot.manual && lot.members.length) describeLot(lot); relot(lot); }
   } else S.cards = S.cards.filter(x => x !== f.c);
   detach(f.c); delete f.c.section;
   return [f.c];
@@ -1454,6 +1456,7 @@ function vPhotos(){
     ${n > 1 ? `<div class="row"><button class="small" data-act="pSaveAll" ${ui.busy ? "disabled" : ""}>Save all ${n} in order</button><button class="small" data-act="pSaveAllPlain" ${ui.busy ? "disabled" : ""}>Save all without labels</button></div>` : ""}
     <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
     ${ph ? `
+    <label>What is in this photo? Optional, and the pricing follows it<textarea id="set-photoNote" style="min-height:56px;font-family:var(--body)" placeholder="1966, 1972 and 1975 Topps left to right. The 1966 stack is 240 cards.">${esc(S.settings.photoNote || "")}</textarea></label>
     <div class="row"><button class="${ph.cards ? "small" : "primary"}" data-act="pauto" ${ui.busy ? "disabled" : ""}>${ph.page ? (ph.cards ? "Price this page again" : `Price this page (${pagePhotos(ph).length} photos)`) : ph.cards ? "Price every card again" : "Price every card"}</button>${ph.page ? `<span class="chip">${esc(ph.page.name)} · photo ${pagePhotos(ph).indexOf(ph) + 1} of ${pagePhotos(ph).length}</span>` : ""}${ui.busy ? `<span class="progress busy">${esc(ui.busy)}</span>` : ""}</div>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;touch-action:manipulation" aria-label="Photo with price tags. Drag a tag to move it."></canvas>
     ${ph.applied === false && ph.cards && ph.cards.length ? `<div class="row">${applyBtn(ph)}<span class="note">Draft prices are faded. Nothing is final until you apply.</span></div>` : ""}
@@ -1793,7 +1796,7 @@ async function autoPrice(){
     S.cards.forEach(c => { if(c.example || c.status === "sold") return; if(c.isLot) c.members.forEach(m => pool.push({c:m, lot:c})); else pool.push({c}); });
     const inv = pool.slice(0, 500).map(p => ({id:p.c.id, card:lineName(p.c), grade:p.c.grade || "", ask:priceOf(p.c)}));
     const img = await shrink(ph.blob);
-    const r = (await ai("locate", {inv}, [img])) || {};
+    const r = (await ai("locate", {inv, note:String(S.settings.photoNote || "")}, [img])) || {};
     (Array.isArray(r.notes) ? r.notes : []).forEach(n => n && n.text && addPhotoNote(String(n.text), String(n.about || "")));
     const found = (Array.isArray(r.cards) ? r.cards : []).filter(f => f && f.box && f.box.x1 > f.box.x0 && f.box.y1 > f.box.y0);
     const norm = v => String(v ?? "").trim().toLowerCase(), last = v => norm(v).split(/\s+/).pop(), used = new Set(), byId = new Map(pool.map(p => [p.c.id, p]));
@@ -2771,6 +2774,53 @@ function buildJump(){
   bar.innerHTML = `<div class="jt">${tabs.map(([h, l, n]) => `<a href="#${h}" class="${h === view ? "on" : ""}">${l}${n ? ` <span>${n}</span>` : ""}</a>`).join("")}</div>${secs.length > 1 ? `<div class="js">${secs.map((s, i) => `<button data-act="jump" data-i="${i}">${esc(s.dataset.jump)}</button>`).join("")}</div>` : ""}`;
 }
 
+/* ---------- all my cards: find, edit and move any card, wherever it sits ---------- */
+const AC_FILTERS = [["all", "All"], ["decide", "To decide"], ["single", "Singles"], ["page", "Pages"], ["lot", "In lots"], ["sold", "Claimed or sold"]];
+function allCards(){
+  const out = [];
+  for(const c of S.cards){ if(c.example) continue; if(c.isLot) c.members.forEach(m => out.push({c:m, lot:c})); else out.push({c}); }
+  return out;
+}
+function acWhere(x){
+  const c = x.c;
+  if(x.lot) return "In " + x.lot.player.replace(/\s*\(\d+ cards?\)$/, "") + (x.lot.status !== "open" ? ", " + x.lot.status : "");
+  if(c.status !== "open") return c.status === "sold" ? "Sold" : "Claimed" + (c.claimBy ? " by u/" + c.claimBy : "");
+  if(c.pin === "page") return (c.section || "Price page");
+  if(c.section) return c.section;
+  return "To decide";
+}
+function acKind(x){ const c = x.c; return x.lot ? "lot" : c.status !== "open" ? "sold" : c.pin === "page" ? "page" : c.section ? "single" : "decide"; }
+function allCardsPanel(){
+  const rows = allCards(); if(!rows.length) return "";
+  const f = ui.acFilter || "all", q = hnorm(ui.acQ), lots = S.cards.filter(c => c.isLot && c.status === "open" && !c.example);
+  const shown = rows.filter(x => (f === "all" || acKind(x) === f) && (!q || hnorm([title(x.c), x.c.grade, acWhere(x)].join(" ")).includes(q)));
+  const counts = Object.fromEntries(AC_FILTERS.map(([k]) => [k, k === "all" ? rows.length : rows.filter(x => acKind(x) === k).length]));
+  const page = numOrNull(ui.pagePrice) || 10, open = ui.dopen.allcards ?? false;
+  return `<details class="panel" data-jump="All cards" data-dk="allcards" ${open ? "open" : ""}><summary><strong>All my cards</strong> <span class="note">${rows.length}, wherever they are</span></summary>
+    <p class="note">Every card you have entered, including ones already placed in singles, pages and lots. Fix any detail, change an ask, or move a card. Undo is in the bar at the top after a move.</p>
+    <input id="acq" value="${esc(ui.acQ || "")}" placeholder="Search: 1969, Aaron, PSA, lot name">
+    <div class="exs">${AC_FILTERS.map(([k, l]) => `<button class="chipbtn ${f === k ? "on" : ""}" data-act="acFilter" data-k="${k}" ${counts[k] || k === "all" ? "" : "disabled"}>${l} ${counts[k]}</button>`).join("")}</div>
+    <ul class="cards">${shown.slice(0, 150).map(x => { const c = x.c, id = c.id;
+      return `<li><div><div class="ttl">${esc(title(c))}</div><div class="meta">${esc([c.grade, acWhere(x)].filter(Boolean).join(" · "))}</div>
+        <details class="edit"><summary>Edit details</summary><div class="fields">
+          ${[["year", "Year", 70], ["set", "Set", 110], ["num", "Number", 70], ["player", "Player or title", 180], ["variation", "Variation", 120], ["grade", "Grade", 90]].map(([k, l]) => `<label>${l}<input data-ef="${k}" data-eid="${id}" value="${esc(c[k] ?? "")}"></label>`).join("")}
+          <label style="flex-basis:100%">Condition notes<input data-ef="flaws" data-eid="${id}" value="${esc(c.flaws || "")}"></label></div></details></div>
+        <div class="nums">${x.lot ? "" : `<label>Ask<input class="money" data-ef="price" data-eid="${id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>`}
+          <select data-mv="${id}" aria-label="Move ${esc(title(c))}"><option value="">Move…</option><option value="decide">Back to To decide</option><option value="single">Make it a single</option><option value="page">Put on the ${money(page)} page</option>${lots.filter(l => l !== x.lot).map(l => `<option value="lot:${l.id}">Into ${esc(l.player.replace(/\s*\(\d+ cards?\)$/, ""))}</option>`).join("")}<option value="remove">Delete it</option></select></div></li>`; }).join("") || `<li><span class="note">Nothing matches.</span></li>`}</ul>
+    ${shown.length > 150 ? `<p class="note">Showing 150 of ${shown.length}. Search to narrow it down.</p>` : ""}
+  </details>`;
+}
+function moveCard(id, to){
+  const f = findCard(id); if(!f || !to) return "";
+  ui.undo = JSON.stringify(S);
+  const name = title(f.c), [c] = take(id); if(!c) return "";
+  if(to === "remove") return `Deleted ${name}.`;
+  if(to === "single"){ c.pin = "single"; c.manual = true; c.section = "Singles"; ensureSection("Singles"); S.cards.push(c); return `${name} is now a single.`; }
+  if(to === "page"){ S.cards.push(c); const per = numOrNull(ui.pagePrice) || 10; applyOps([{op:"page", ids:[c.id], perCard:per}]); return `${name} is on the ${money(per)} page.`; }
+  if(to.startsWith("lot:")){ const lot = S.cards.find(x => x.id === to.slice(4) && x.isLot); if(lot){ c.pin = "lot"; c.section = lot.section; lot.members.push(c); if(lot.manual) describeLot(lot); relot(lot); return `${name} is now in ${lot.player.replace(/\s*\(\d+ cards?\)$/, "")}.`; } }
+  S.cards.push(c); return `${name} is back in To decide.`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2859,6 +2909,7 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "acFilter"){ ui.acFilter = el.dataset.k; ui.dopen.allcards = true; return render(); }
   else if(act === "lotEval"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot) return lotEval(f.c); }
   else if(act === "lotEvalAll") return lotEvalAll();
   else if(act === "lotUse"){ const f = findCard(el.dataset.lid); if(f && f.c.lotEval && f.c.lotEval.price){ f.c.price = f.c.lotEval.price; f.c.fixed = true; ui.cmdMsg = `${f.c.player} now asks ${money(f.c.price)}.`; } }
@@ -3013,6 +3064,9 @@ document.addEventListener("change", e => {
   if(t.id === "goaltext"){ ui.goalDraft = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
   if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.lot) relot(f.lot); save(); } return render(); }
+  if(t.dataset.ef){ const f = findCard(t.dataset.eid); if(f){ const k = t.dataset.ef, v = t.value.trim(); f.c[k] = k === "price" ? (numOrNull(v) > 0 ? numOrNull(v) : null) : k === "year" && /^\d{4}$/.test(v) ? +v : v; if(k === "flaws"){ f.c.flawsOk = true; } delete f.c.example; if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); } save(); } return render(); }
+  if(t.dataset.mv){ const to = t.value; if(to){ ui.cmdMsg = moveCard(t.dataset.mv, to); ui.dopen.allcards = true; save(); } return render(); }
+  if(t.id === "acq"){ ui.acQ = t.value; ui.dopen.allcards = true; return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
