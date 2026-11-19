@@ -1524,7 +1524,7 @@ function progressBar(){
   ui.nextKey = ["live", "post", "scan"].includes(pick[0]) ? "" : pick[0]; ui.nextSig = String(pick[2]); ui.nextText = pick[3];
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
   return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog"><ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
-    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button></span></div>
+    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button><button class="small danger" data-act="startOver">Start over</button></span></div>
     ${skipped ? `<p class="note">${plural(skipped, "step is", "steps are")} set aside. <button class="small" data-act="nextBack">Bring ${skipped === 1 ? "it" : "them"} back</button></p>` : `<p class="note">Disagree? Say so in the box below, for example "skip the price check, I priced these from my own comps".</p>`}</div>`;
 }
 
@@ -2204,6 +2204,19 @@ function photoStrip(){
       <div class="row"><input id="pagename" class="grow" value="${esc(ui.pageName || "")}" placeholder="Page name, like 1959 Fleer page or $10 per card"><button class="small primary" data-act="pMakePage" ${picked.length >= 2 ? "" : "disabled"}>Make ${picked.length >= 2 ? picked.length + " photos" : "them"} one page</button>${list.some(x => picked.includes(x.id) && x.page) ? `<button class="small" data-act="pUnpage">Take them off their page</button>` : ""}</div></div>` : ""}`;
 }
 
+/* ---------- start over: one tap clears the current sale and its photos, keeps what the tool has learned, Undo brings it back ---------- */
+async function startOver(){
+  const cards = S.cards.filter(c => !c.example).reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), photos = ui.photos || [];
+  ui.undo = JSON.stringify(S);
+  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
+  ui.undoPhotos = photos; ui.undoPhotosFor = ui.undo;
+  for(const x of photos) await idb("del", x.id);
+  ui.photos = []; ui.photo = null; ui.sel.clear(); ui.copyOpts = null; ui.clearOpen = false; ui.photoInstr = ""; ui.listText = "";
+  save();
+  ui.cmdMsg = `Started over. Removed ${plural(cards, "card", "cards")}${photos.length ? " and " + plural(photos.length, "photo", "photos") : ""}, the plan and the post title. Your history, sold log, sub prices and settings are kept. Undo brings it all back.`;
+  if(location.hash !== "#inventory") location.hash = "#inventory"; else render();
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2290,6 +2303,7 @@ document.addEventListener("click", async e => {
   else if(act === "learn") return learnThread();
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
+  else if(act === "startOver") return startOver();
   else if(act === "pauto") return ui.photo && ui.photo.page ? runQueue(pagePhotos(ui.photo), "Pricing " + ui.photo.page.name) : autoPrice();
   else if(act === "pQueue") return runQueue((ui.photos || []).filter(x => !x.cards), "Pricing photos");
   else if(act === "pPickMode"){ ui.pickPhotos = !ui.pickPhotos; ui.picked = []; }
@@ -2351,7 +2365,7 @@ document.addEventListener("click", async e => {
   else if(act === "flawBack" && c){ c.flaws = joinFlaws([...flawParts(c), el.dataset.v]); c.flawsOk = true; }
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
-  else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); (S.sales || []).forEach(saleSaved); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
+  else if(act === "undo"){ if(ui.undoPhotos && ui.undoPhotosFor === ui.undo){ ui.photos = ui.undoPhotos; ui.photos.forEach(x => idb("put", photoRecord(x))); } ui.undoPhotos = null; S = merge(JSON.parse(ui.undo)); (S.sales || []).forEach(saleSaved); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
   else if(act === "selAll"){ (ui.onlyCheck ? S.cards.filter(needsCheck) : toDecide()).forEach(x => ui.sel.add(x.id)); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
   else if(act === "asLot"){ ui.undo = JSON.stringify(S); ui.cmdMsg = combineLot(); ui.selMsg = ""; ui.sel.clear(); }
