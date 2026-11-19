@@ -18,6 +18,7 @@ export default function Claimboard() {
         </h1>
         <p className="sub">Scan a table of vintage cards, price them, build the sale post, track claims.</p>
         <div id="auth" className="row" style={{ marginLeft: "auto" }} />
+        <p className="sub" id="savestat" aria-live="polite" />
       </header>
       <nav id="nav" aria-label="Sections">
         <a href="#inventory">
@@ -29,7 +30,7 @@ export default function Claimboard() {
           Claims<span className="n" id="n-claims" />
         </a>
         <a href="#ship">Ship</a>
-        <a href="#sold">Sold comps</a>
+        <a href="#sold">History</a>
         <a href="#grade">Grade test</a>
         <a href="#radar">Deal radar</a>
       </nav>

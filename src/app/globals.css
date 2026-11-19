@@ -44,6 +44,8 @@ details.why dd{margin:0;overflow-wrap:anywhere}
 .chipbtn{font:500 12px/1 var(--mono);padding:6px 8px;border-radius:3px;border:1px solid var(--line);background:var(--sunk);color:var(--ink)}
 .chipbtn.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
 .chipbtn.off{text-decoration:line-through;background:transparent;color:var(--muted)}
+.val.hist{font-weight:400;color:var(--muted)}
+.val.hist button{margin-left:4px}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}

@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { claimsPrompt, editPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { claimsPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -35,7 +35,11 @@ export async function POST(req: Request) {
   let prompt: string;
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
-  else if (task === "edit") {
+  else if (task === "extract") {
+    const text = String(payload.text ?? "");
+    if (!text || text.length > 60_000) return fail(400, "The thread text is missing or too long.");
+    prompt = extractPrompt(text);
+  } else if (task === "edit") {
     const text = String(payload.text ?? "");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!text || text.length > 2000 || rows.length > 2000) return fail(400, "The instruction is missing or the inventory is too large.");
@@ -44,7 +48,7 @@ export async function POST(req: Request) {
     const text = String(payload.text ?? "");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!text || text.length > 4000 || rows.length < 2 || rows.length > 2000) return fail(400, "The plan is missing or the inventory is too large.");
-    prompt = planPrompt(text, rows);
+    prompt = planPrompt(text, rows, Array.isArray(payload.history) ? payload.history.slice(0, 20) : []);
   } else {
     const text = String(payload.text ?? "");
     const lots = Array.isArray(payload.lots) ? payload.lots : [];

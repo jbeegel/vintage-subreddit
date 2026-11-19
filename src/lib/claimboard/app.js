@@ -29,15 +29,24 @@ function loadLocal(){ try{ const r = localStorage.getItem(LS_KEY); if(r){ const 
 function merge(d){ return {...S, ...d, settings:{...S.settings, ...(d.settings||{})}, radar:{...S.radar, ...(d.radar||{})}}; }
 let saveT = null, writing = Promise.resolve();
 function save(){
-  S.updatedAt = Date.now();
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-  clearTimeout(saveT);
-  saveT = setTimeout(() => { if(!cap.token) return;
-    const snapshot = JSON.parse(JSON.stringify(S)), at = S.updatedAt;
-    writing = writing.then(() => api("/api/state", {method:"PUT", json:{state: snapshot, updatedAt: at}})).catch(() => {});
-    if(S.settings.share) writing = writing.then(() => api("/api/solds", {method:"PUT", json:{items: S.solds.map(({year,set,num,player,grade,price,date}) => ({year,set,num,player,grade,price,date}))}})).catch(() => {});
-  }, 1200);
+  S.updatedAt = Date.now(); ui.dirty = true;
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); ui.localAt = S.updatedAt; ui.localErr = ""; }catch(e){ ui.localAt = 0; ui.localErr = "Could not save on this device"; }
+  clearTimeout(saveT); saveT = setTimeout(pushCloud, 1200); stat();
 }
+/* Second copy on the server for signed-in sellers, so a cleared browser or another device still has the work. */
+function pushCloud(){
+  clearTimeout(saveT);
+  if(!cap.token){ ui.cloudMsg = cap.auth ? "Sign in to back up to your account" : ""; return stat(); }
+  if(!ui.dirty) return;
+  ui.dirty = false;
+  const snapshot = JSON.parse(JSON.stringify(S)), at = S.updatedAt;
+  ui.cloudMsg = "Backing up"; stat();
+  writing = writing.then(() => api("/api/state", {method:"PUT", json:{state: snapshot, updatedAt: at}})).then(() => { ui.cloudMsg = "Backed up to your account " + tm(at); stat(); }, () => { ui.dirty = true; ui.cloudMsg = "Account backup failed. It will retry on your next change"; stat(); });
+  if(S.settings.share) writing = writing.then(() => api("/api/solds", {method:"PUT", json:{items: S.solds.map(({year,set,num,player,grade,price,date}) => ({year,set,num,player,grade,price,date}))}})).catch(() => {});
+}
+function saleSaved(sale){ /* finished sales travel inside the saved state */ }
+addEventListener("pagehide", pushCloud);
+document.addEventListener("visibilitychange", () => { if(document.hidden) pushCloud(); });
 async function api(path, {method = "GET", json, form} = {}){
   const headers = {};
   if(cap.token) headers.Authorization = "Bearer " + cap.token;
@@ -56,7 +65,11 @@ function ai(task, payload, images){
 const aiOff = () => cap.auth && !cap.token ? "Sign in at the top of the page to use this." : "AI features are not set up on this server yet.";
 async function loadRemote(){
   if(!cap.token) return;
-  try{ const d = await api("/api/state"); if(d && d.state && d.updatedAt > S.updatedAt) S = merge(d.state); }catch(e){}
+  try{
+    const d = await api("/api/state");
+    if(d && d.state && d.updatedAt > S.updatedAt){ S = merge(d.state); ui.cloudMsg = "Restored from your account backup"; }
+    else if(S.cards.some(c => !c.example)){ ui.dirty = true; pushCloud(); }
+  }catch(e){}
   render();
 }
 function renderAuth(){
@@ -223,7 +236,7 @@ function rowInv(c){
   return `<li data-id="${c.id}">
     <div class="pickrow">${c.status === "open" && !c.isLot ? `<input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}>` : ""}<div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
       <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}${c.where ? " · " + esc(c.where) : ""}</div>
-      ${valueLine(c)}</div></div>
+      ${valueLine(c)}${histLine(c)}</div></div>
     <div class="nums">
       <label>Sold comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label>
       <label>Reddit ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
@@ -361,6 +374,7 @@ function vSold(){
     <label class="inline"><input type="checkbox" id="set-share" ${S.settings.share ? "checked" : ""} ${cap.token ? "" : "disabled"}> Add my sold prices to the shared index. Card, grade, price and date only. No usernames.</label>
     ${cap.token ? "" : `<p class="note">Sign in to share your sold prices.</p>`}
   </div>
+  ${historyPanels()}
   <div class="panel"><div class="row" style="justify-content:space-between"><h2>Shared sub index</h2><button class="small" data-act="loadCommunity">Refresh</button></div>
     <p class="note">Built only from testers who opt in above. Search before you price.</p>
     <input id="q" placeholder="Search, e.g. 1968 Aaron" value="${esc(ui.q)}">
@@ -497,6 +511,7 @@ function whyLines(c){
   if(c.pin === "page") out.push(["Reddit ask", `${money(p)}, the page price.` + (auto != null ? ` Priced alone it would be ${money(auto)}.` : "")]);
   else if(c.price != null) out.push(["Reddit ask", `${money(p)}, typed by you.` + (auto != null ? ` The worked-out ask would be ${money(auto)}.` : "")]);
   else if(basis != null) out.push(["Reddit ask", `${c.comp != null ? "Sold comp" : "Midpoint of the value range"} ${money(Math.round(basis))}, less ${d}% because there are no platform fees, rounded to ${money(auto)}.`]);
+  histWhy(c).forEach(x => out.push(x));
   const min = singleMin();
   if(c.section || c.pin) out.push(["Placement", c.pin === "page" ? `On the ${c.section} page${c.manual ? ", placed by you" : ", placed by the sale plan"}.` : c.pin === "single" ? `A single${c.manual ? ", placed by you" : ", agreed by you from the suggestions"}.` : c.pin === "lot" ? "Kept for a lot, your choice." : `In "${c.section}", placed by the sale plan.`]);
   else if(min && (p || 0) >= min) out.push(["Suggestion", `Sell as a single: its ask of ${money(p)} is at or above your ${money(min)} line.`]);
@@ -573,6 +588,100 @@ function singlesPanel(){
   </div>`;
 }
 
+/* ---------- history: finished sales are kept, and past results feed the suggestions ---------- */
+const hkey = x => [x.year, x.set, x.player].map(v => String(v ?? "").trim().toLowerCase()).join("|");
+const dshort = t => t ? new Date(t).toLocaleDateString([], {month:"short", day:"numeric", year:"numeric"}) : "";
+function historyFor(c){
+  const out = {mine:[], unsold:[], sub:[]};
+  if(c.isLot || !c.player || !c.year) return out;
+  const k = hkey(c);
+  S.solds.forEach(s => { if(s.cardId !== c.id && hkey(s) === k) out.mine.push({price:s.price, date:s.date, grade:s.grade}); });
+  (S.sales || []).forEach(sale => sale.items.forEach(i => { if(i.kind !== "lot" && i.sold == null && i.ask != null && hkey(i) === k) out.unsold.push({price:i.ask, date:sale.date, grade:i.g}); }));
+  (S.subComps || []).forEach(s => { if(hkey(s) === k) out.sub.push(s); });
+  for(const n in out) out[n].sort((a, b) => (b.date || 0) - (a.date || 0));
+  return out;
+}
+function histWhy(c){
+  const h = historyFor(c), out = [], g = x => x.grade ? " (" + x.grade + ")" : "";
+  if(h.mine.length) out.push(["Your past sales", h.mine.slice(0, 5).map(x => `${money(x.price)} on ${dshort(x.date)}${g(x)}`).join("; ") + "."]);
+  if(h.unsold.length) out.push(["Did not sell", h.unsold.slice(0, 5).map(x => `at ${money(x.price)} on ${dshort(x.date)}`).join("; ") + ". Consider a lower ask, a price page or a lot."]);
+  if(h.sub.length) out.push(["Seen on the sub", h.sub.slice(0, 5).map(x => `${x.sold ? "sold" : "listed"} ${money(x.price)}${g(x)}, noted ${dshort(x.date)}`).join("; ") + ". From threads you pasted in."]);
+  return out;
+}
+function histLine(c){
+  if(c.status !== "open" || c.isLot) return "";
+  const h = historyFor(c), bits = [], g = x => x.grade ? " (" + esc(x.grade) + ")" : "";
+  if(h.mine[0]) bits.push(`You sold one for ${money(h.mine[0].price)} on ${dshort(h.mine[0].date)}${g(h.mine[0])}${h.mine.length > 1 ? ", and " + (h.mine.length - 1) + " more" : ""}. <button class="small" data-act="useHist" data-v="${h.mine[0].price}">Ask ${money(h.mine[0].price)}</button>`);
+  if(h.unsold[0]) bits.push(`Did not sell at ${money(h.unsold[0].price)} on ${dshort(h.unsold[0].date)}.`);
+  const ss = h.sub.filter(s => s.sold);
+  if(ss[0]) bits.push(`On the sub: sold ${money(ss[0].price)}${g(ss[0])}${ss.length > 1 ? ", and " + (ss.length - 1) + " more" : ""}.`);
+  else if(h.sub[0]) bits.push(`On the sub: listed at ${money(h.sub[0].price)}${g(h.sub[0])}.`);
+  return bits.length ? `<div class="val hist">${bits.join(" ")}</div>` : "";
+}
+function insights(){
+  const out = [], by = {single:[0, 0], page:[0, 0], lot:[0, 0]}, bands = [["under $10", 0, 10], ["$10 to $25", 10, 25], ["$25 to $75", 25, 75], ["$75 and up", 75, 1e9]].map(b => [...b, 0, 0]);
+  let under = 0, n = 0;
+  (S.sales || []).forEach(s => s.items.forEach(i => {
+    const b = by[i.kind] || by.single; b[0]++; if(i.sold != null) b[1]++;
+    if(i.kind === "single" && i.ask != null){ const band = bands.find(x => i.ask >= x[1] && i.ask < x[2]); if(band){ band[3]++; if(i.sold != null) band[4]++; } }
+    if(i.sold != null && i.ask){ n++; under += (i.ask - i.sold) / i.ask; }
+  }));
+  const lab = {single:"Singles", page:"Price-page cards", lot:"Lots"}, pct = (a, b) => Math.round(a / b * 100) + "%";
+  for(const k in by) if(by[k][0] >= 3) out.push(`${lab[k]}: ${by[k][1]} of ${by[k][0]} sold (${pct(by[k][1], by[k][0])})`);
+  bands.forEach(b => { if(b[3] >= 3) out.push(`Singles asked ${b[0]}: ${b[4]} of ${b[3]} sold (${pct(b[4], b[3])})`); });
+  if(n >= 3 && Math.abs(under / n) >= .03) out.push(`Sold items went for ${Math.round(Math.abs(under / n) * 100)}% ${under > 0 ? "under" : "over"} ask on average`);
+  return out;
+}
+function closeSale(){
+  const rows = S.cards.filter(c => !c.example);
+  if(!rows.length) return "There is nothing in the current sale to close out.";
+  const waiting = shipOrders().filter(x => !x.o.shippedAt).length;
+  if(waiting) return `${waiting} paid order${waiting === 1 ? " has" : "s have"} not been marked shipped. Finish those on the Ship tab first, so they are not lost.`;
+  const kind = c => c.isLot ? "lot" : c.pin === "page" ? "page" : "single";
+  const items = rows.map(c => ({t:title(c), year:c.year, set:c.set, num:c.num, player:c.player, g:c.grade || "", f:c.flaws || "", kind:kind(c), n:c.isLot ? c.members.length : 1, section:c.section || "", ask:priceOf(c), sold:c.status === "sold" ? c.soldPrice ?? null : null, soldAt:c.soldAt || null}));
+  const sale = {id:uid(), date:Date.now(), name:(S.settings.title || "").trim() || "Sale of " + new Date().toLocaleDateString([], {month:"long", day:"numeric"}), plan:S.plan ? S.plan.text : "", items};
+  S.sales = [sale, ...(S.sales || [])];
+  S.cards = S.cards.filter(c => c.status !== "sold" && !c.example);
+  S.cards.forEach(c => { c.status = "open"; c.claimBy = ""; c.claimAt = null; c.backups = []; c.relist = (c.relist || 0) + 1; });
+  S.orders = {}; S.settings.title = "";
+  saleSaved(sale);
+  const sold = items.filter(i => i.sold != null).length;
+  return `Saved. ${sold} of ${items.length} sold. ${S.cards.length} unsold item${S.cards.length === 1 ? " stays" : "s stay"} in your inventory for next time.`;
+}
+async function learnThread(){
+  const text = (($("#subtext") || {}).value || "").trim().slice(0, 60000); if(!text) return;
+  if(!cap.ai){ ui.learnMsg = aiOff(); return render(); }
+  ui.busy = "Reading the thread"; render();
+  try{
+    const r = (await ai("extract", {text})) || {};
+    const items = (r.items || []).filter(i => i && i.player && Number(i.price) > 0).map(i => ({year:i.year ?? "", set:i.set ?? "", num:i.num ?? "", player:String(i.player), grade:String(i.grade || ""), price:Number(i.price), sold:!!i.sold, date:Date.now()}));
+    S.subComps = [...items, ...(S.subComps || [])].slice(0, 4000);
+    ui.learnMsg = items.length ? `Added ${items.length} price${items.length === 1 ? "" : "s"}, ${items.filter(i => i.sold).length} marked sold.` : "No priced cards were found in that text.";
+    if(items.length) save();
+  }catch(e){ ui.learnMsg = "Could not read that: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function historyPanels(){
+  const sales = S.sales || [], subs = S.subComps || [], ins = insights();
+  const hit = r => !ui.q || [r.year, r.set, r.player, r.grade].join(" ").toLowerCase().includes(ui.q.toLowerCase());
+  return `<div class="panel"><h2>Finished sales</h2>
+    <p class="note">Close out a sale when it is done. It is kept as a record, sold cards leave your inventory and unsold ones stay for next time. Past results then appear as notes on matching cards and steer the next plan.</p>
+    <div class="row"><button class="primary" data-act="closeSale">Close out the current sale</button><span class="note">${esc(ui.histMsg || "")}</span></div>
+    ${ins.length ? `<h3>What your sales show</h3><p>${ins.map(esc).join(" · ")}</p>` : ""}
+    ${sales.map(s => { const sold = s.items.filter(i => i.sold != null); return `<details class="edit"><summary>${esc(dshort(s.date))} · ${esc(s.name)} · ${sold.length} of ${s.items.length} sold · ${money(sold.reduce((a, i) => a + i.sold, 0)) || "$0"}</summary>
+      <div class="scroll"><table><thead><tr><th>Item</th><th>Sold as</th><th class="num">Ask</th><th class="num">Sold</th></tr></thead><tbody>${s.items.map(i => `<tr><td>${esc(i.t)}</td><td>${esc(i.section || i.kind)}</td><td class="num">${money(i.ask)}</td><td class="num">${i.sold != null ? money(i.sold) : "unsold"}</td></tr>`).join("")}</tbody></table></div></details>`; }).join("") || `<p class="note">No finished sales yet.</p>`}
+  </div>
+  <div class="panel"><h2>Sub sales you have read</h2>
+    <p class="note">Paste the text of any sale thread from the sub, price list and comments included. The tool pulls out each card, its price and whether it sold, and shows them as reference notes on your matching cards. They stay private to you and usernames are not kept.</p>
+    <textarea id="subtext" placeholder="Paste a sale post and its comments here"></textarea>
+    <div class="row"><button class="primary" data-act="learn" ${ui.busy ? "disabled" : ""}>Add to my reference</button><span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.learnMsg || "")}</span></div>
+    ${subs.length ? `<p class="note">${subs.length} prices collected, ${subs.filter(s => s.sold).length} marked sold. The search box below filters this list too.</p>
+      <div class="scroll"><table><thead><tr><th>Card</th><th>Grade</th><th class="num">Price</th><th>Result</th></tr></thead><tbody>${subs.filter(hit).slice(0, 150).map(r => `<tr><td>${esc(title(r))}</td><td>${esc(r.grade)}</td><td class="num">${money(r.price)}</td><td>${r.sold ? "sold" : "listed"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+  </div>`;
+}
+const tm = t => new Date(t).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+function stat(){ const el = $("#savestat"); if(el) el.textContent = [ui.localErr || (ui.localAt ? "Saved on this device " + tm(ui.localAt) : ""), ui.cloudMsg || ""].filter(Boolean).join(" · "); }
+
 /* ---------- sale plan: the seller describes the sale, the tool shapes singles, lots, title and photo list around it ---------- */
 const PRESETS = [
   "A page or two of singles first, best cards up top. Everything else in lots, mostly by year.",
@@ -624,7 +733,7 @@ async function runPlan(){
   try{
     unlotAll(); resetPages();
     const rows = S.cards.filter(c => c.status === "open" && !c.manual).map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c), pin:c.pin || null}));
-    const r = await ai("plan", {text, rows});
+    const r = await ai("plan", {text, rows, history: insights()});
     applyPlan(r || {}, text);
     const lots = S.cards.filter(c => c.isLot).length;
     ui.planMsg = `Done: ${S.plan.sections.length} section${S.plan.sections.length === 1 ? "" : "s"}, ${lots} lot${lots === 1 ? "" : "s"}. Check the lots and prices below, then open the Post tab.`;
@@ -642,6 +751,7 @@ function planPanel(){
       <label class="inline">Lots priced <input class="money" id="set-lotDiscount" type="number" min="0" max="60" value="${esc(S.settings.lotDiscount ?? 10)}" style="width:60px">% under the cards' total</label>
       ${p ? `<button class="small" data-act="unplan">Undo plan</button>` : ""}</div>
     ${ui.planMsg ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.planMsg)}</p>` : ""}
+    ${insights().length ? `<h3>From your past sales</h3><p class="note">${insights().map(esc).join(" · ")}</p>` : ""}
     ${p ? `<h3>Sections</h3><p>${p.sections.map(s => esc(s) + " (" + S.cards.filter(c => c.section === s).length + ")").join(" · ")}</p>
       ${p.photos.length ? `<h3>Photos to take</h3><ol style="margin:0;padding-left:20px">${p.photos.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
       ${p.gaps.length ? `<p class="flag">${p.gaps.map(esc).join(" ")}</p>` : ""}` : ""}
@@ -1042,6 +1152,7 @@ function render(){
   $("#n-inv").textContent = S.cards.length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   $("#main").innerHTML = cmdBar() + VIEWS[name]();
+  stat();
   if(name === "photos") drawPhoto();
   renderAuth();
   if(name === "sold" && ui.community == null && !ui.communityMsg) loadCommunity();
@@ -1066,6 +1177,9 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "closeSale"){ ui.histMsg = closeSale(); }
+  else if(act === "learn") return learnThread();
+  else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "ptagUndo" && ui.photo){ const t = ui.photo.tags.pop(); if(t && ui.photo.qi > 0 && photoQueue()[ui.photo.qi - 1] === t.text) ui.photo.qi--; ui.photo.out = null; return render(); }
   else if(act === "ptagClear" && ui.photo){ ui.photo.tags = []; ui.photo.qi = 0; ui.photo.out = null; return render(); }
