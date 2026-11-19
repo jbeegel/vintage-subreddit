@@ -210,14 +210,16 @@ function vInventory(){
     <div class="drop">
       <p class="grow">Drop in a short video sweep or a batch of photos. A video is cut down to its sharpest frames before anything is read, so move slowly and keep the cards flat.</p>
       <div class="row">
-        <input type="file" id="file" accept="image/*,video/*" multiple hidden><input type="file" id="backfile" accept="image/*" hidden>
+        <input type="file" id="file" accept="image/*,video/*" multiple hidden><input type="file" id="backfile" accept="image/*" multiple hidden>
         <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Choose photos or video</button>
         <button data-act="add">Add a row by hand</button>
+        <label class="inline"><input type="checkbox" id="onecard" ${ui.oneCard ? "checked" : ""}> These photos are all one card</label>
       </div>
     </div>
     <p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works: a large photo is cut into full-detail crops and each crop is read. Use your phone's highest resolution, shoot straight down, avoid glare.")}</p>
   </div>
   ${checkPanel()}
+  ${groupPanel()}
   ${singlesPanel()}
   ${planPanel()}
   ${hasEx ? `<p class="flag">These rows are examples, including the comp figures. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
@@ -252,6 +254,7 @@ function rowInv(c){
       ${links(c)}
     </div>
     ${checkBox(c)}
+    ${rqBox(c)}
     ${flawBox(c)}
     ${whyBox(c)}
     <details class="edit"><summary>Edit details</summary><div class="fields">
@@ -509,6 +512,7 @@ function whyLines(c){
   }
   out.push(["Identified as", title(c) + (c.conf != null ? `, ${Math.round(c.conf * 100)}% confidence.` : ".") + (c.idWhy ? " " + c.idWhy : "") + (c.needsBack ? " The back should be checked to confirm." : "")]);
   out.push(["Condition", ([c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded.") + (c.flawsAI != null ? (c.flawsOk ? ". Reviewed by you." : ". Suggested by the scan and not yet confirmed by you.") + (c.flawsAI && c.flawsAI !== c.flaws ? " The scan first suggested: " + c.flawsAI + "." : "") : "")]);
+  if(c.photosSeen) out.push(["Extra photos", `${c.photosSeen} photo${c.photosSeen === 1 ? "" : "s"} of this card were checked${c.recheckNote ? ", after you asked: " + c.recheckNote : ""}. ${c.recheckSummary || ""}`.trim()]);
   if(c.comp != null) out.push(["Value", `Sold comp of ${money(c.comp)} that you entered${c.compSrc && c.compSrc !== "example" ? " (" + c.compSrc + ")" : c.compSrc === "example" ? " (example figure)" : ""}.`]);
   else if(c.aiLow != null && c.aiHigh != null) out.push(["Value", `${money(c.aiLow)} to ${money(c.aiHigh)} raw in this condition. ${c.valueWhy || ""} This is an AI estimate from general knowledge, not a record of actual sales. Use the eBay solds and SportsCardsPro links to confirm.`]);
   else out.push(["Value", "None yet."]);
@@ -536,7 +540,7 @@ function flawBox(c){
       ${dropped.map(x => `<button class="chipbtn off" data-act="flawBack" data-v="${esc(x)}" aria-label="Restore note: ${esc(x)}">${esc(x)} +</button>`).join("")}
       <input data-f="flawAdd" placeholder="Add your own note" aria-label="Add a condition note" style="width:170px">
       ${pending ? `<button class="small" data-act="flawOk">Looks right</button>` : c.flawsOk ? `<span class="chip ok">condition confirmed</span>` : ""}
-      ${c.backSeen ? `<span class="chip ok">back checked</span>` : c.flawsAI != null && !needsCheck(c) ? `<button class="small" data-act="backPick">Add back photo</button>` : ""}
+      ${c.backSeen ? `<span class="chip ok">back checked</span>` : ""}${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}
     </div>`;
 }
 const unconfirmed = () => S.cards.filter(c => c.status === "open").reduce((a, c) => a + (c.isLot ? c.members : [c]).filter(m => m.flawsAI != null && !m.flawsOk).length, 0);
@@ -555,8 +559,8 @@ const needsCheck = c => checkReasons(c).length > 0;
 function checkBox(c){
   const why = checkReasons(c);
   if(!why.length) return c.backMsg ? `<div class="check ok"><span>${esc(c.backMsg)}</span></div>` : "";
-  return `<div class="check"><span><strong>Check this card:</strong> ${esc(why.join(", "))}.${c.num ? "" : " The card number was not read."} Add a photo of the back, fix the details here, or confirm it.</span>
-      <div class="row"><button class="small primary" data-act="backPick" ${ui.busy ? "disabled" : ""}>Add back photo</button>
+  return `<div class="check"><span><strong>Check this card:</strong> ${esc(why.join(", "))}.${c.num ? "" : " The card number was not read."} Add photos of the back or close-ups, fix the details here, or confirm it.</span>
+      <div class="row"><button class="small primary" data-act="backPick" ${ui.busy ? "disabled" : ""}>Add photos</button>
         <label>Year<input data-f="year" inputmode="numeric" value="${esc(c.year ?? "")}" style="width:72px"></label>
         <label>Card #<input data-f="num" value="${esc(c.num ?? "")}" style="width:72px"></label>
         <label class="grow">Player<input data-f="player" value="${esc(c.player ?? "")}"></label>
@@ -595,6 +599,106 @@ async function readBack(file, id){
       save();
     }
   }catch(e){ c.backMsg = "The back could not be read: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+
+/* ---------- grouping suggestions: one player, one graded set, or a run of low-value cards from one set ---------- */
+ui.grpPrice = {};
+const SLAB = /^(PSA|SGC|BGS|BVG|CGC|HGA|CSG)\b/i;
+const looseCards = () => S.cards.filter(c => c.status === "open" && !c.isLot && !c.manual && !c.section && c.pin !== "single" && c.pin !== "page" && !c.example);
+function groupSuggestions(){
+  const cs = looseCards(), skip = new Set(S.grpSkip || []), out = [], norm = v => String(v ?? "").trim().toLowerCase(), min = singleMin() || 20;
+  const by = f => { const m = new Map(); cs.forEach(c => { const k = f(c); if(!k) return; if(!m.has(k)) m.set(k, []); m.get(k).push(c); }); return m; };
+  const add = (key, name, why, list) => { if(!skip.has(key)) out.push({key, name, why, ids:list.map(c => c.id), cards:list}); };
+  for(const [k, list] of by(c => /\b(lot|unidentified|unknown)\b/.test(norm(c.player)) ? "" : norm(c.player)))
+    if(list.length >= 3) add("p:" + k, list[0].player + " lot", `${list.length} ${list[0].player} cards. A player lot brings in that player's collectors.`, list);
+  for(const [, list] of by(c => SLAB.test(c.grade || "") && c.year ? norm(c.year) + "|" + norm(c.set) : ""))
+    if(list.length >= 3) add("s:" + norm(list[0].year) + "|" + norm(list[0].set), `${list[0].year} ${list[0].set} graded lot`, `${list.length} graded ${list[0].year} ${list[0].set} cards. A matching run of slabs sells well together.`, list);
+  for(const [, list] of by(c => c.year && !SLAB.test(c.grade || "") && (priceOf(c) ?? 0) < min ? norm(c.year) + "|" + norm(c.set) : ""))
+    if(list.length >= 4) add("y:" + norm(list[0].year) + "|" + norm(list[0].set), `${list[0].year} ${list[0].set} lot`, `${list.length} cards from ${list[0].year} ${list[0].set}, each asking under ${money(min)}. Easier to sell as one lot.`, list);
+  return out.sort((a, b) => b.cards.length - a.cards.length);
+}
+function groupPanel(){
+  const gs = groupSuggestions(); if(!gs.length) return "";
+  const d = Number(S.settings.lotDiscount ?? 10);
+  return `<div class="panel pick"><h2>Suggested groupings <span class="note">${gs.length}</span></h2>
+    <p class="note">Cards that usually sell better together. Check the cards and the price, then make the lot in one tap. A card can show up in more than one suggestion until you choose.</p>
+    <ul class="cards">${gs.slice(0, 8).map(g => {
+      const sum = g.cards.reduce((a, c) => a + (priceOf(c) || 0), 0), un = g.cards.filter(c => priceOf(c) == null).length;
+      const sug = sum && !un ? roundP(sum * (1 - d / 100)) : null;
+      return `<li data-gkey="${esc(g.key)}"><div><div class="ttl">${esc(g.name)} (${g.cards.length} cards)</div>
+        <div class="meta">${esc(g.cards.map(c => title(c) + (priceOf(c) != null ? " " + money(priceOf(c)) : "")).join("; "))}</div>
+        <div class="meta">Why: ${esc(g.why)} ${un ? esc(un + (un === 1 ? " card has" : " cards have") + " no ask yet, so type a lot price.") : esc("Their asks add up to " + money(sum) + ". " + d + "% off for taking the group is " + money(sug) + ".")}</div></div>
+        <div class="nums"><label>Lot price<input class="money" data-gp="${esc(g.key)}" inputmode="decimal" value="${esc(ui.grpPrice[g.key] ?? sug ?? "")}"></label>
+          <button class="primary" data-act="grpMake">Make this lot</button><button class="small" data-act="grpSkip">Not now</button></div></li>`; }).join("")}</ul>
+  </div>`;
+}
+
+/* ---------- more photos of one card: angles, the back, close-ups; all read as the same card ---------- */
+ui.rq = {};
+const RQ_MAX = 6;
+async function queuePhotos(id, files){
+  const q = ui.rq[id] = ui.rq[id] || {blobs:[], urls:[], note:"", msg:""};
+  q.msg = "";
+  for(const f of files){
+    if(q.blobs.length >= RQ_MAX){ q.msg = `${RQ_MAX} photos is the most one recheck can use.`; break; }
+    try{ const b = await shrink(f); q.blobs.push(b); q.urls.push(URL.createObjectURL(b)); }catch(e){ q.msg = "One file could not be opened as a photo."; }
+  }
+  render();
+}
+function dropRq(id){ const q = ui.rq[id]; if(q) q.urls.forEach(u => URL.revokeObjectURL(u)); delete ui.rq[id]; }
+function rqBox(c){
+  const q = ui.rq[c.id]; if(!q) return "";
+  return `<div class="check rq"><span><strong>Recheck with ${q.blobs.length} photo${q.blobs.length === 1 ? "" : "s"}.</strong> Every photo is read as this one card: the back, close-ups of corners or creases, other angles, better light.</span>
+    <div class="row">${q.urls.map(u => `<img src="${u}" alt="" class="rqthumb">`).join("")}<button class="small" data-act="backPick" ${q.blobs.length >= RQ_MAX ? "disabled" : ""}>Add another photo</button></div>
+    <label>What should it look at? Optional.<input data-rq="${c.id}" value="${esc(q.note)}" placeholder="I think it is a 1959, and the corners look better than it says"></label>
+    <div class="row"><button class="primary" data-act="recheck" ${ui.busy || !q.blobs.length ? "disabled" : ""}>Recheck now</button><button class="small" data-act="rqCancel">Cancel</button>${q.msg ? `<span>${esc(q.msg)}</span>` : ""}</div></div>`;
+}
+const flawList = v => (Array.isArray(v) ? v : String(v || "").split(/,\s*/)).map(x => String(x).trim()).filter(Boolean);
+async function askOneCard(card, note, blobs){ return (await ai("recheck", {card, note}, blobs)) || {}; }
+async function recheck(id){
+  const f = findCard(id), q = ui.rq[id]; if(!f || !q || !q.blobs.length) return;
+  const c = f.c;
+  if(!cap.ai){ q.msg = aiOff(); return render(); }
+  ui.busy = "Rechecking"; q.msg = "Looking at every photo"; render();
+  try{
+    const card = {year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, flaws:c.flaws, valueLow:c.aiLow, valueHigh:c.aiHigh, soldComp:c.comp, ask:priceOf(c)};
+    const r = await askOneCard(card, q.note, q.blobs);
+    if(r.mixed){ q.msg = (r.summary ? String(r.summary) + " " : "") + "Nothing was changed. Remove the photos of the other card and try again."; ui.busy = ""; return render(); }
+    const before = title(c), n = q.blobs.length;
+    for(const k of ["year", "set", "num", "player", "variation"]) if(r[k] != null && r[k] !== "") c[k] = r[k];
+    if(typeof r.conf === "number") c.conf = r.conf;
+    if(r.idWhy) c.idWhy = String(r.idWhy);
+    if(r.grade) c.grade = String(r.grade);
+    if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
+    const have = flawParts(c).map(x => x.toLowerCase()), add = flawList(r.flaws).filter(x => !have.includes(x.toLowerCase()));
+    if(add.length){ c.flaws = [...flawParts(c), ...add].join(", "); c.flawsAI = [...flawParts({flaws:c.flawsAI}), ...add].join(", "); c.flawsOk = false; }
+    if(r.sawBack){ c.backSeen = true; c.needsBack = false; }
+    c.idOk = (c.conf ?? 0) >= .75;
+    c.photosSeen = (c.photosSeen || 0) + n; c.recheckNote = q.note || ""; c.recheckSummary = String(r.summary || "");
+    c.backMsg = `Rechecked with ${n} photo${n === 1 ? "" : "s"}. ` + (c.recheckSummary || (title(c) !== before ? "" : "The photos confirm it.")) + (title(c) !== before ? ` Now ${title(c)}.` : "") + (add.length ? ` New condition notes: ${add.join(", ")}.` : "");
+    if(c.example) delete c.example;
+    if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); }
+    dropRq(id); save();
+  }catch(e){ q.msg = "The recheck did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+async function scanOne(files){
+  if(!cap.ai){ ui.scanMsg = aiOff(); return render(); }
+  ui.busy = "Reading the photos of one card"; render();
+  try{
+    const blobs = []; for(const f of files.slice(0, RQ_MAX)) blobs.push(await shrink(f));
+    const r = await askOneCard({}, "This is a new card for the inventory. Identify it from these photos.", blobs);
+    if(r.mixed) ui.scanMsg = (r.summary ? String(r.summary) + " " : "") + "Turn off \"These photos are all one card\" to scan them as separate cards.";
+    else {
+      if(S.cards.every(c => c.example)) S.cards = [];
+      const fl = flawList(r.flaws).join(", ");
+      const c = {id:uid(), status:"open", year:r.year ?? "", set:r.set ?? "", num:r.num ?? "", player:r.player ?? "Unidentified card", variation:r.variation ?? "", grade:r.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof r.conf === "number" ? r.conf : .5, needsBack:false, backSeen:!!r.sawBack, aiLow:numOrNull(r.aiLow), aiHigh:numOrNull(r.aiHigh), idWhy:String(r.idWhy || ""), valueWhy:String(r.valueWhy || ""), where:`${blobs.length} photos of one card`, photosSeen:blobs.length, comp:null, price:null};
+      S.cards.push(c);
+      ui.scanMsg = `Added ${title(c)} from ${blobs.length} photo${blobs.length === 1 ? "" : "s"} of one card.` + (files.length > RQ_MAX ? ` Only the first ${RQ_MAX} photos were used.` : "");
+      save();
+    }
+  }catch(e){ ui.scanMsg = "That did not work: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
 }
 
@@ -1283,6 +1387,20 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => x !== c); ui.sel.delete(c.id); ui.cmdMsg = "Deleted " + title(c) + ". Undo brings it back."; }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "grpMake" || act === "grpSkip"){
+    const k = el.closest("[data-gkey]").dataset.gkey, g = groupSuggestions().find(x => x.key === k);
+    if(g && act === "grpSkip") S.grpSkip = [...(S.grpSkip || []), k];
+    if(g && act === "grpMake"){
+      const before = JSON.stringify(S), p = numOrNull(ui.grpPrice[k]);
+      if(applyOps([{op:"lot", name:g.name, ids:g.ids, price:p > 0 ? p : undefined, section:"Lots"}])){
+        const lot = S.cards[S.cards.length - 1]; if(lot && lot.isLot) lot.why = "Suggested grouping. " + g.why;
+        ui.undo = before; ui.cmdMsg = `Made ${g.name} from ${g.cards.length} cards at ${money(priceOf(lot)) || "no price yet"}. Undo brings the cards back.`;
+      }
+      delete ui.grpPrice[k];
+    }
+  }
+  else if(act === "recheck" && c) return recheck(c.id);
+  else if(act === "rqCancel" && c){ dropRq(c.id); }
   else if(act === "idOk" && c){ c.idOk = true; c.backMsg = ""; }
   else if(act === "delSel"){
     const gone = S.cards.filter(x => ui.sel.has(x.id));
@@ -1340,14 +1458,17 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("change", e => {
   const t = e.target;
-  if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) scan(f); return; }
+  if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) (ui.oneCard ? scanOne(f) : scan(f)); return; }
   if(t.dataset.sel){ if(t.checked) ui.sel.add(t.dataset.sel); else ui.sel.delete(t.dataset.sel); return render(); }
   if(t.id === "pageprice"){ ui.pagePrice = t.value; return; }
   if(t.id === "pfile"){ const f = t.files[0]; t.value = ""; if(f) loadPhoto(f); return; }
   if(t.id === "ph-target" && ui.photo){ setPhotoTarget(t.value); return render(); }
   if((t.id === "ph-title" || t.id === "ph-note") && ui.photo){ ui.photo[t.id.slice(3)] = t.value; ui.photo.out = null; return render(); }
   if(t.id === "ph-tag" && ui.photo){ ui.photo.tagText = t.value === (photoQueue()[ui.photo.qi] ?? "") ? null : t.value; return; }
-  if(t.id === "backfile"){ const f = t.files[0]; t.value = ""; if(f && ui.backFor) readBack(f, ui.backFor); return; }
+  if(t.id === "backfile"){ const fs = [...t.files]; t.value = ""; if(fs.length && ui.backFor) queuePhotos(ui.backFor, fs); return; }
+  if(t.id === "onecard"){ ui.oneCard = t.checked; return; }
+  if(t.dataset.gp){ ui.grpPrice[t.dataset.gp] = t.value; return; }
+  if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
@@ -1380,7 +1501,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; });
 document.addEventListener("keydown", e => { if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }

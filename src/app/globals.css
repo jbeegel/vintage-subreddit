@@ -56,6 +56,8 @@ details.why dd{margin:0;overflow-wrap:anywhere}
 .check{grid-column:1/-1;background:var(--warn-bg);border-radius:4px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:8px}
 .check strong{color:var(--warn)}
 .check.ok{background:var(--ok-bg)}
+.check.rq{background:var(--sunk)}
+.rqthumb{width:56px;height:56px;object-fit:cover;border-radius:4px}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
