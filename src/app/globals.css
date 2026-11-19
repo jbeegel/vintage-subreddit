@@ -143,3 +143,7 @@ svg text{font:10px var(--mono);fill:var(--muted)}
 .ring{fill:none;stroke:var(--line)} .dot-hi{fill:var(--accent)} .dot-mid{fill:var(--warn)} .dot-lo{fill:var(--muted)} .me{fill:var(--ink)}
 @media (max-width:560px){ ul.cards li{grid-template-columns:minmax(0,1fr)} .nums{justify-content:flex-start} }
 @media (prefers-reduced-motion:no-preference){ .progress.busy::after{content:" ...";animation:blink 1s steps(2) infinite} @keyframes blink{50%{opacity:0}} }
+@media (max-width:640px){ input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea, select{font-size:16px} }
+.wrap{overflow-x:clip}
+.panel, label, .row > *{max-width:100%}
+p, .note, .meta, label, .chipbtn, .ttl{overflow-wrap:break-word}
