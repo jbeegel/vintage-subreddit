@@ -728,10 +728,51 @@ function singleCandidates(){
   if(!min) return out;
   for(const c of S.cards){
     if(c.status !== "open") continue;
-    if(c.isLot){ for(const m of c.members || []) if(!m.pin && (priceOf(m) || 0) >= min) out.push({c:m, lot:c}); }
-    else if(!c.pin && !c.section && (priceOf(c) || 0) >= min) out.push({c});
+    if(c.isLot){
+      const tot = (c.members || []).reduce((a, m) => a + (priceOf(m) || 0), 0);
+      // a card worth selling alone, or one carrying most of a small lot's value
+      for(const m of c.members || []) if(!m.pin && ((priceOf(m) || 0) >= min || (tot && (priceOf(m) || 0) >= 10 && (priceOf(m) || 0) / tot >= .4))) out.push({c:m, lot:c});
+    }
+    else if(!c.pin && !c.section && (priceOf(c) || 0) >= min) out.push({c, target:anchorTarget(c)});
   }
   return out;
+}
+const sameRun = (a, b) => String(a.year || "") === String(b.year || "") && String(a.set || "").toLowerCase() === String(b.set || "").toLowerCase() && a.year;
+const anchorTarget = c => S.cards.find(l => l.isLot && l.status === "open" && (l.members || []).some(m => sameRun(m, c))) || null;
+/* sell-through from the seller's finished sales: [listed, sold] */
+function sellThrough(kind, p){
+  let n = 0, s = 0; const band = [[0, 10], [10, 25], [25, 75], [75, 1e9]].find(b => p >= b[0] && p < b[1]) || [0, 1e9];
+  (S.sales || []).forEach(sale => sale.items.forEach(i => { if(i.kind !== kind) return; if(kind === "single" && !(i.ask >= band[0] && i.ask < band[1])) return; n++; if(i.sold != null) s++; }));
+  return {n, s, rate:n ? s / n : null, band};
+}
+/* the recommendation: positive points favor selling alone, negative favor keeping it as the lot's anchor */
+function pullAdvice(x){
+  const c = x.c, lot = x.lot || x.target, p = priceOf(c) || 0, min = singleMin(), d = Number(S.settings.lotDiscount ?? 10) / 100;
+  const others = lot ? lot.members.filter(m => m !== c) : [], rest = others.reduce((a, m) => a + (priceOf(m) || 0), 0);
+  const withIt = lot ? (x.lot && lot.fixed ? priceOf(lot) : roundP((rest + p) * (1 - d))) : null, without = others.length >= 2 ? roundP(rest * (1 - d)) : null;
+  const share = lot && rest + p ? p / (rest + p) : 0, top = others.reduce((a, m) => Math.max(a, priceOf(m) || 0), 0);
+  const why = []; let score = 0;
+  const h = historyFor(c), g = r => r.grade ? " (" + r.grade + ")" : "";
+  const soldAlone = [...h.mine.map(r => ({...r, src:"You sold one alone"})), ...h.sub.filter(r => r.sold).map(r => ({...r, src:"Sold on the sub"}))].filter(r => r.price >= p * .8);
+  if(soldAlone.length){ score += 2; why.push(`${soldAlone[0].src} for ${money(soldAlone[0].price)}${g(soldAlone[0])}${soldAlone[0].date ? " on " + dshort(soldAlone[0].date) : ""}${soldAlone.length > 1 ? ", and " + (soldAlone.length - 1) + " more at that level" : ""}.`); }
+  const flop = h.unsold.filter(r => r.price <= p * 1.1);
+  if(flop.length){ score -= 2; why.push(`It did not sell alone at ${money(flop[0].price)} on ${dshort(flop[0].date)}.`); }
+  const pc = S.priceCheck && S.priceCheck.items[c.id], ev = pc ? (pc.evidence || []).filter(e => Number(e.price) > 0) : [];
+  if(ev.length){ const hi = ev.filter(e => Number(e.price) >= p).length; if(hi * 2 >= ev.length){ score += 1; } why.push(`Recent sales from the price check: ${ev.slice(0, 3).map(e => [e.source, money(Number(e.price)), e.note].filter(Boolean).join(" ")).join("; ")}.`); }
+  if(min && p >= min * 2){ score += 1; why.push(`At ${money(p)} it is well over your ${money(min)} singles line.`); }
+  else if(min && p >= min) score += .5;
+  if(lot){
+    const weak = others.length >= 2 && top < Math.max(5, min / 2);
+    if(!weak && share >= .6){ score += 1; why.push(`It is ${Math.round(share * 100)}% of the lot's value, so lot buyers would mostly be paying for this one card.`); }
+    if(weak && share >= .15){ score -= 1.5; why.push(`The other ${others.length} cards are all ${money(Math.max(1, top))} or less. Without it the lot is ${money(without)} of lower cards, and one strong card is what draws buyers to a lot like that.`); }
+    if(p && d) why.push(`${x.lot ? "Kept in" : "Added to"} the lot, the ${Math.round(d * 100)}% bundle discount gives away about ${money(Math.max(1, Math.round(p * d)))} on this card.`);
+  }
+  const st = sellThrough("single", p), sl = sellThrough("lot", 0);
+  if(st.n >= 3){ if(st.rate >= .6) score += 1; else if(st.rate <= .35) score -= 1; why.push(`Your singles asked ${money(st.band[0])} to ${st.band[1] > 1e8 ? "up" : money(st.band[1])}: ${st.s} of ${st.n} sold.`); }
+  if(sl.n >= 3 && st.n >= 3 && sl.rate > st.rate + .2){ score -= 1; why.push(`Your lots sell through better: ${sl.s} of ${sl.n} sold.`); }
+  if(!soldAlone.length && !flop.length && !ev.length && st.n < 3) why.push("No sales history or comps for this card yet, so this is based on its value and the rest of the lot. Run Double-check prices on the Sale tab for recent sales.");
+  const rec = !lot || score > 0 ? "single" : "anchor";
+  return {rec, strong:Math.abs(score) >= 2, why, withIt, without, others:others.length, lot};
 }
 function findCard(id){
   for(const c of S.cards){ if(c.id === id) return {c}; if(c.isLot){ const m = (c.members || []).find(x => x.id === id); if(m) return {c:m, lot:c}; } }
@@ -765,15 +806,25 @@ function setAside(id, choice){
 function singlesPanel(){
   if(!S.cards.some(c => c.status === "open")) return "";
   const cs = singleCandidates(), min = singleMin();
-  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>Set aside as singles${cs.length ? ` <span class="note">${cs.length} suggested</span>` : ""}</h2>
+  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>Single or lot anchor?${cs.length ? ` <span class="note">${cs.length} to decide</span>` : ""}</h2>
     <label class="inline">Suggest at $<input class="money" id="set-singleMin" inputmode="decimal" value="${esc(S.settings.singleMin ?? 20)}" style="width:64px"> and up</label></div>
-    ${cs.length ? `<p class="note">These are worth enough to sell on their own. Agree and the tool keeps them out of the lots.</p>
-    <ul class="cards">${cs.map(({c, lot}) => `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, lot ? "now in " + lot.player : c.where].filter(Boolean).join(" · "))}</div>
-        <div class="meta">Why: its ask of ${money(priceOf(c))} is at or above your ${money(min)} line.${c.valueWhy ? " " + esc(c.valueWhy) : ""}</div></div>
-      <div class="nums"><button class="primary" data-act="single">Make it a single</button><button class="small" data-act="keeplot">Keep in the lot</button></div></li>`).join("")}</ul>
-    ${cs.length > 1 ? `<div class="row"><button data-act="singleAll">Agree to all ${cs.length}</button></div>` : ""}`
+    ${cs.length ? `<p class="note">A big card can sell well alone, or it can anchor a lot and make the whole thing move. Each one has both options priced out and a recommendation from your past sales, sub prices and comps. You decide.</p>
+    <ul class="cards">${cs.map(x => { const c = x.c, a = pullAdvice(x), lot = a.lot, solo = a.rec === "single";
+      const lotName = lot ? lot.player.replace(/\s*\(\d+ cards?\)$/, "") : "";
+      return `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, x.lot ? "now in " + x.lot.player : x.target ? "on its own; could anchor " + lotName : c.where].filter(Boolean).join(" · "))}</div>
+        <div class="meta"><strong>Recommended: ${solo ? "sell it alone" : "keep it as the lot's anchor"}</strong>${a.strong ? "" : " (a close call)"}</div>
+        ${a.why.length ? `<ul class="chg meta">${a.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</div>
+      <div class="nums"><button class="${solo ? "primary" : "small"}" data-act="single">Sell alone at ${money(priceOf(c))}${x.lot ? a.without != null ? `, lot becomes ${money(a.without)}` : ", the rest go loose" : ""}</button>
+        ${x.lot ? `<button class="${solo ? "small" : "primary"}" data-act="keeplot">Keep as anchor, lot ${money(a.withIt)}</button>` : x.target ? `<button class="${solo ? "small" : "primary"}" data-act="anchorIn">Add to ${esc(lotName)} as its anchor, lot ${money(a.withIt)}</button>` : ""}</div></li>`; }).join("")}</ul>
+    ${cs.length > 1 ? `<div class="row"><button data-act="singleAll">Follow all ${cs.length} recommendations</button></div>` : ""}`
     : `<p class="note">No undecided cards at $${min} or more right now.</p>`}
   </div>`;
+}
+function anchorInto(c, lot){
+  const i = S.cards.indexOf(c); if(i < 0) return;
+  S.cards.splice(i, 1); detach(c); c.pin = "lot"; c.section = lot.section;
+  lot.members.unshift(c); describeLot(lot); relot(lot);
+  ui.cmdMsg = `${title(c)} now anchors ${lot.player}, which asks ${money(priceOf(lot))}.`;
 }
 
 /* ---------- history: finished sales are kept, and past results feed the suggestions ---------- */
@@ -2014,7 +2065,8 @@ document.addEventListener("click", async e => {
     if(!ui.selMsg.startsWith("Enter")) ui.sel.clear();
   }
   else if(act === "single" || act === "keeplot"){ const h = el.closest("[data-sid]"); if(h) setAside(h.dataset.sid, act === "single" ? "single" : "lot"); }
-  else if(act === "singleAll"){ singleCandidates().forEach(x => setAside(x.c.id, "single")); }
+  else if(act === "anchorIn"){ const h = el.closest("[data-sid]"), f = h && findCard(h.dataset.sid), lot = f && !f.lot && anchorTarget(f.c); if(lot) anchorInto(f.c, lot); }
+  else if(act === "singleAll"){ singleCandidates().map(x => [x, pullAdvice(x)]).forEach(([x, a]) => { if(a.rec === "single") setAside(x.c.id, "single"); else if(x.lot) setAside(x.c.id, "lot"); else if(x.target) anchorInto(x.c, x.target); }); }
   else if(act === "preset"){ ui.planDraft = PRESETS[+el.dataset.i]; return render(); }
   else if(act === "unplan"){ S.cards.forEach(x => { if(x.isLot) x.manual = false; }); unlotAll(); S.cards.forEach(x => { if(x.status === "open"){ detach(x); delete x.section; } }); S.plan = null; ui.planMsg = ui.selMsg = ""; ui.sel.clear(); }
   else if(act === "unlot" && c && c.isLot){ const i = S.cards.indexOf(c); c.members.forEach(m => { detach(m); delete m.section; }); S.cards.splice(i, 1, ...c.members); }
