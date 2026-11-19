@@ -306,6 +306,7 @@ function vPost(){
   const st = S.settings, {t, b, missing, flagged, backs} = buildPost();
   return `<section class="view"><div class="two">
   <div class="panel"><h2>Post settings</h2>
+    ${copyBox()}
     <label>Title (leave blank to build it from your top cards)<input id="set-title" value="${esc(st.title)}" placeholder="${esc(t)}"></label>
     <label>Opening lines<textarea id="set-intro" style="min-height:70px;font-family:var(--body)">${esc(st.intro)}</textarea></label>
     <label>Payment<input id="set-pay" value="${esc(st.pay)}"></label>
@@ -527,6 +528,8 @@ function whyLines(c){
   }
   out.push(["Identified as", title(c) + (c.conf != null ? `, ${Math.round(c.conf * 100)}% confidence.` : ".") + (c.idWhy ? " " + c.idWhy : "") + (c.needsBack ? " The back should be checked to confirm." : "")]);
   out.push(["Condition", ([c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded.") + (c.flawsAI != null ? (c.flawsOk ? ". Reviewed by you." : ". Suggested by the scan and not yet confirmed by you.") + (c.flawsAI && c.flawsAI !== c.flaws ? " The scan first suggested: " + c.flawsAI + "." : "") : "")]);
+  const pck = S.priceCheck && S.priceCheck.items[c.id];
+  if(pck) out.push(["Price check", `${pck.used ? "Suggestion used" : pck.verdict === "ok" ? "Looks right" : pck.verdict === "raise" ? "Could go higher" : "Could go lower"}${Number(pck.suggest) > 0 ? ", suggested " + money(Number(pck.suggest)) : ""}. ${pck.why || ""} ${(pck.evidence || []).slice(0, 3).map(e => [e.source, e.price != null ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")).join("; ")}`.trim()]);
   if(c.photosSeen) out.push(["Extra photos", `${c.photosSeen} photo${c.photosSeen === 1 ? "" : "s"} of this card were checked${c.recheckNote ? ", after you asked: " + c.recheckNote : ""}. ${c.recheckSummary || ""}`.trim()]);
   if(c.comp != null) out.push(["Value", `Sold comp of ${money(c.comp)} that you entered${c.compSrc && c.compSrc !== "example" ? " (" + c.compSrc + ")" : c.compSrc === "example" ? " (example figure)" : ""}.`]);
   else if(c.aiLow != null && c.aiHigh != null) out.push(["Value", `${money(c.aiLow)} to ${money(c.aiHigh)} raw in this condition. ${c.valueWhy || ""} This is an AI estimate from general knowledge, not a record of actual sales. Use the eBay solds and SportsCardsPro links to confirm.`]);
@@ -1247,12 +1250,12 @@ function idb(op, arg){
 function keepPhoto(){
   const ph = ui.photo; if(!ph || !ph.blob) return;
   clearTimeout(ui.photoT);
-  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white"}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
+  ui.photoT = setTimeout(() => idb("put", photoRecord(ph)).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
 }
 async function loadPhotos(){
   const all = await idb("all");
   const mem = ui.photos || [], have = new Set(mem.map(x => x.id));
-  ui.photos = [...mem, ...(all || []).filter(r => !have.has(r.id)).map(r => ({...r, tagText:null, out:null, msg:""}))].sort((a, b) => b.at - a.at);
+  ui.photos = [...mem, ...(all || []).filter(r => !have.has(r.id)).map(r => ({...r, tagText:null, out:null, msg:""}))].sort((a, b) => (a.ord ?? a.at) - (b.ord ?? b.at));
   ui.photoKept = all != null;
   if(location.hash === "#photos") render();
 }
@@ -1269,7 +1272,7 @@ async function loadPhoto(file){
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
     ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, scale:Number(S.settings.tagScale) || 1, color:S.settings.tagColor || "white", tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     setPhotoTarget(""); /* no headline by default: a band across the top would cover the handwritten note */
-    ui.photos = [ui.photo, ...(ui.photos || [])]; ui.photoErr = "";
+    ui.photo.ord = Date.now(); ui.photos = [...(ui.photos || []), ui.photo]; ui.photoErr = "";
   }catch(e){ ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
   render();
 }
@@ -1278,8 +1281,8 @@ function fitText(g, text, x, y, maxW, px, weight){
   do { g.font = `${weight} ${size}px Archivo, "Arial Narrow", Arial, sans-serif`; size *= .94; } while(g.measureText(text).width > maxW && size > px * .4);
   g.fillText(text, x, y);
 }
-function drawPhoto(){
-  const ph = ui.photo, cv = $("#pcanvas"); if(!ph || !cv) return;
+function drawPhoto(cvArg, phArg){
+  const ph = phArg || ui.photo, cv = cvArg || $("#pcanvas"); if(!ph || !cv) return;
   cv.width = ph.w; cv.height = ph.h;
   const g = cv.getContext("2d"), u = Math.max(ph.w, ph.h) / 100, pad = 1.6 * u;
   g.drawImage(ph.bmp, 0, 0, ph.w, ph.h); g.textBaseline = "top";
@@ -1297,13 +1300,13 @@ function drawPhoto(){
     const s = (t.s || 3) * tagScale(ph), k = s / 3, col = TAG_COLORS[tagColor(ph)];
     g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
     const w = g.measureText(t.text).width + 1.8 * u * k, h = 4.6 * u * k, x = Math.min(ph.w - w, Math.max(0, t.x * ph.w - w / 2)), y = Math.min(ph.h - h, Math.max(0, t.y * ph.h - h / 2));
-    const on = t.ref && (ph.selRefs || []).includes(t.ref);
+    const on = !phArg && t.ref && (ph.selRefs || []).includes(t.ref);
     g.fillStyle = on ? "#dff3fb" : col[0]; g.strokeStyle = on ? "#0073a2" : col[2]; g.lineWidth = (on ? .7 : .35) * u * k;
     t.box = {x, y, w, h};
     g.beginPath(); g.roundRect(x, y, w, h, .8 * u * k); g.fill(); g.stroke();
     g.fillStyle = on ? "#0a120f" : col[1]; g.fillText(t.text, x + .9 * u * k, y + .9 * u * k);
   }
-  keepPhoto();
+  if(!phArg) keepPhoto();
 }
 /* Drag a tag to move it. A press that starts on a tag never places a new one. */
 function tagAt(pt){
@@ -1355,9 +1358,10 @@ function vPhotos(){
   const ph = ui.photo, ts = photoTargets();
   return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
     <p class="note">Take the picture, and the tool writes the headline, notes, numbers and prices onto it, with your username and today's date. No paper labels, no drawing on screenshots.</p>
+    ${(ui.photos || []).length > 1 ? `<div class="row"><button class="small" data-act="pSaveAll" ${ui.busy ? "disabled" : ""}>Save all ${ui.photos.length} in order</button><button class="small" data-act="pSaveAllPlain" ${ui.busy ? "disabled" : ""}>Save all without labels</button></div>` : ""}
     <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${(ui.photos || []).length ? "Add another photo" : "Take or choose a photo"}</button>${(ui.photos || []).length ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
-    ${(ui.photos || []).length ? `<div class="row thumbs">${ui.photos.map(x => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
+    ${(ui.photos || []).length ? `<div class="row thumbs">${ui.photos.map((x, i) => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${i + 1}. ${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
     <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
     ${ph ? `<div class="two">
       <label>This photo shows<select id="ph-target">${ts.map(t => `<option value="${esc(t.key)}" ${t.key === ph.key ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
@@ -1366,13 +1370,14 @@ function vPhotos(){
       <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
     </div>
     <div class="row"><button class="primary" data-act="pauto" ${ui.busy ? "disabled" : ""}>Price every card automatically</button>${photoExtra(ph).length ? `<button class="small" data-act="pfoundAdd">Add the ${photoExtra(ph).length} new card${photoExtra(ph).length === 1 ? "" : "s"} to Review</button>` : ""}<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || "Finds every card, matches it to your inventory and puts its ask under it.")}</span></div>
+    ${orderAskBox()}
     ${styleRow(ph)}
     ${photoEditBox(ph)}
     <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
       <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
     <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} Drag any tag to move it.</p>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;cursor:crosshair;touch-action:manipulation" aria-label="Photo with labels. Tap to place the next tag."></canvas>
-    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><button class="small" data-act="pdel">Delete this photo</button><span class="note">${esc(ph.msg || "")}</span></div>
+    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><button class="small" data-act="pMove" data-d="-1" ${(ui.photos || []).indexOf(ph) > 0 ? "" : "disabled"}>Move earlier</button><button class="small" data-act="pMove" data-d="1" ${(ui.photos || []).indexOf(ph) < (ui.photos || []).length - 1 ? "" : "disabled"}>Move later</button><button class="small" data-act="pdel">Delete this photo</button><span class="note">${esc(ph.msg || "")}</span></div>
     ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
     <p class="note">A typed username and date may not count as proof of possession on every subreddit. Keep a handwritten note in the shot until the mods confirm a printed stamp is accepted.</p>` : ""}
   </div></section>`;
@@ -1414,6 +1419,7 @@ function vSale(){
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
     <div class="row"><a class="btn primary" href="#post">Build the post</a><button class="small" data-act="goComment">Price comment</button>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
+    ${priceCheckPanel()}
     ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
       return `<div class="panel"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
       : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
@@ -1439,6 +1445,7 @@ function progressBar(){
   else if(checks) next = [`${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}];
   else if(groups) next = [`${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}];
   else if(decide) next = [`${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}];
+  else if(!S.postedAt && !S.priceCheck && items.length) next = ["Everything has a place. Double-check the asks against recent sales before you post.", {act:"pcGo", label:"Double-check prices"}];
   else if(!S.postedAt) next = ["Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}];
   else if(claimed) next = [`${plural(claimed, "claim is", "claims are")} waiting for payment.`, {href:"#claims", label:"Claims"}];
   else if(toShip) next = [`${plural(toShip, "paid order", "paid orders")} to ship.`, {href:"#ship", label:"Ship"}];
@@ -1685,8 +1692,8 @@ async function autoPrice(){
     ph.groups = [...byLot].map(([lotId, ids], i) => ({id:"g" + i, ids, lotId, price:null, label:""}));
     ph.hidden = []; ph.selRefs = [];
     relabel();
-    const extra = photoExtra(ph);
-    ph.msg = found.length ? `Placed ${plural(ph.tags.length, "price tag", "price tags")} for ${plural(found.length, "card", "cards")}.` + (ph.groups.length ? " Cards from the same lot share one tag." : "") + (extra.length ? ` ${plural(extra.length, "card is", "cards are")} not in your inventory, so ${extra.length === 1 ? "its tag uses" : "their tags use"} the AI estimate less your discount.` : "") + " Drag a tag to move it, or change the tags below." : "No cards were found in this photo.";
+    const extra = photoExtra(ph), added = extra.length ? addFoundCards() : "";
+    ph.msg = found.length ? `Placed ${plural(ph.tags.length, "price tag", "price tags")} for ${plural(found.length, "card", "cards")}.` + (ph.groups.length ? " Cards from the same lot share one tag." : "") + (extra.length ? ` ${plural(extra.length, "new card was", "new cards were")} added to Review, priced from the AI estimate less your discount. Run Double-check prices on the Sale tab to compare them with recent sales.` : "") + " Drag a tag to move it, or change the tags below." : "No cards were found in this photo.";
   }catch(e){ ph.msg = "Auto-pricing did not work: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
 }
@@ -1712,24 +1719,36 @@ function condShort(c){
 const lineName = c => [c.year, c.set, c.num ? "#" + c.num : "", c.player, c.variation ? "(" + c.variation + ")" : ""].filter(Boolean).join(" ");
 const lotTagText = (c, a) => c.tagText || "All " + c.members.length + " for " + (a != null ? money(a) : "a price to come");
 function priceComment(){
-  const st = S.settings, items = ordered().filter(inSale), secs = [...new Set(items.map(c => c.section || "Other cards"))];
+  const st = S.settings, items = ordered().filter(inSale);
   const strike = (t, c) => c.status === "sold" ? "~~" + t + "~~ **SOLD**" : c.status === "claimed" ? t + " (pending)" : t;
+  const block = c => {
+    const a = priceOf(c);
+    if(!c.isLot) return "- " + strike(`${lineName(c)}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n";
+    const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
+    let t = "\n" + strike(`**${name}, ${n} cards - ${lotTagText(c, a)}**`, c) + "\n\n";
+    for(const m of c.members) t += `- ${lineName(m)}${condShort(m) ? " - " + condShort(m) : ""}\n`;
+    const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
+    t += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
+      ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
+      : "No creases, writing or paper loss that I can see.") + "\n\n";
+    return t;
+  };
   let out = "";
-  for(const s of secs){
-    out += `**${s}**\n\n`;
-    const list = items.filter(c => (c.section || "Other cards") === s);
-    for(const c of list){
-      const a = priceOf(c);
-      if(!c.isLot){ out += "- " + strike(`${lineName(c)}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n"; continue; }
-      const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
-      out += "\n" + strike(`**${name}, ${n} cards - ${lotTagText(c, a)}**`, c) + "\n\n";
-      for(const m of c.members) out += `- ${lineName(m)}${condShort(m) ? " - " + condShort(m) : ""}\n`;
-      const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
-      out += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
-        ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
-        : "No creases, writing or paper loss that I can see.") + "\n\n";
-    }
-    out += "\n";
+  const pics = S.settings.commentByPhoto ? photosWithCards() : [];
+  if(pics.length){
+    const done = new Set();
+    pics.forEach((x, i) => {
+      const cs = [...(x.cards || [])].filter(pc => pc.invId && !(x.hidden || []).includes(pc.id)).sort((a, b) => ((a.box.y0 + a.box.y1) - (b.box.y0 + b.box.y1)) || (a.box.x0 - b.box.x0));
+      const rows = []; let cur = null;
+      for(const pc of cs){ const yc = (pc.box.y0 + pc.box.y1) / 2, h = pc.box.y1 - pc.box.y0; if(!cur || yc - cur.yc > h * .5){ cur = {yc, list:[]}; rows.push(cur); } cur.list.push(pc); }
+      const seq = [];
+      rows.forEach(r => r.list.sort((a, b) => a.box.x0 - b.box.x0).forEach(pc => { const f = findCard(pc.invId); const top = f && (f.lot || f.c); if(top && inSale(top) && !done.has(top.id)){ done.add(top.id); seq.push(top); } }));
+      if(seq.length) out += `**Photo ${ui.photos.indexOf(x) + 1}**\n\n` + seq.map(block).join("") + "\n";
+    });
+    const rest = items.filter(c => !done.has(c.id));
+    if(rest.length) out += "**Other cards**\n\n" + rest.map(block).join("") + "\n";
+  } else {
+    for(const s of [...new Set(items.map(c => c.section || "Other cards"))]) out += `**${s}**\n\n` + items.filter(c => (c.section || "Other cards") === s).map(block).join("") + "\n";
   }
   out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted on every line and already priced in. Ask for more photos of anything before you claim.\n`;
   return out.replace(/\n{3,}/g, "\n\n");
@@ -1738,10 +1757,128 @@ function commentPanel(){
   if(!S.cards.some(inSale)) return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2><p class="note">Nothing is in the sale yet. Place cards on the Review tab, and the comment builds itself here.</p></div>`;
   return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2>
     <p class="note">The whole sale in order: year, set, number and name, a short condition summary and the ask. Lots list every card, their grades and any issues. It updates whenever the sale changes.</p>
+    ${photosWithCards().length ? `<label class="inline"><input type="checkbox" id="set-commentByPhoto" ${S.settings.commentByPhoto ? "checked" : ""}> Order by photo (photo 1 first, cards left to right)</label>` : ""}
     <textarea id="out-comment" readonly style="min-height:320px">${esc(priceComment())}</textarea>
     <div class="row"><button class="primary" data-copy="out-comment">Copy price comment</button></div></div>`;
 }
 const vPostAll = () => vPost().replace(/<\/section>\s*$/, commentPanel() + "</section>");
+
+/* ---------- double-check prices: every ask against web comps, the seller's history and collected sub prices ---------- */
+function checkItems(){
+  return S.cards.filter(c => inSale(c) && c.status === "open").map(c => {
+    const h = c.isLot ? null : historyFor(c);
+    return {id:c.id, kind:c.isLot ? "lot" : c.pin === "page" ? "price page card" : "single", card:c.isLot ? c.player : lineName(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c),
+      value:c.aiLow != null && c.aiHigh != null ? [c.aiLow, c.aiHigh] : null, soldComp:c.comp ?? null,
+      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined,
+      mySales:h && h.mine.length ? h.mine.slice(0, 3).map(x => ({price:x.price, grade:x.grade, date:new Date(x.date).toISOString().slice(0, 10)})) : undefined,
+      subPrices:h && h.sub.length ? h.sub.slice(0, 3).map(x => ({price:x.price, sold:x.sold, grade:x.grade})) : undefined};
+  });
+}
+async function runCheck(){
+  const items = checkItems();
+  if(!items.length){ ui.cmdMsg = "Nothing in the sale to check yet. Place cards on Review first."; return render(); }
+  if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
+  const res = {}, notes = [], discount = Number(S.settings.discount) || 0;
+  try{
+    for(let i = 0; i < items.length; i += 15){
+      const chunk = items.slice(i, i + 15);
+      ui.busy = `Double-checking prices, ${Math.min(i + 15, items.length)} of ${items.length}. Looking up recent sales can take a minute or two.`; render();
+      const r = (await ai("pricecheck", {items:chunk, discount})) || {};
+      (Array.isArray(r.items) ? r.items : []).forEach(x => { if(x && x.id) res[x.id] = x; });
+      if(r.summary) notes.push(String(r.summary));
+    }
+    S.priceCheck = {at:Date.now(), items:res, summary:notes.join(" ")};
+    const off = Object.values(res).filter(x => x.verdict !== "ok").length;
+    ui.cmdMsg = `Price check done: ${off ? plural(off, "ask looks", "asks look") + " off." : "every ask looks right."} The results are at the top of the Sale tab.`;
+    save();
+  }catch(e){ ui.cmdMsg = "The price check did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+const evidenceList = r => (r.evidence || []).length ? `<div class="meta">Evidence: ${(r.evidence || []).slice(0, 3).map(e => esc([e.source, e.price != null && !isNaN(Number(e.price)) ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")) + (/^https?:\/\//.test(String(e.url || "")) ? ` <a href="${esc(e.url)}" target="_blank" rel="noopener">see it</a>` : "")).join(" · ")}</div>` : "";
+function priceCheckPanel(){
+  const pc = S.priceCheck, busy = ui.busy ? "disabled" : "";
+  if(!pc) return `<div class="panel" id="pricecheck"><div class="row" style="justify-content:space-between"><h2>Double-check prices</h2><button class="primary" data-act="pcRun" ${busy}>Double-check prices</button></div>
+    <p class="note">Compares every ask with recent sold prices on the web, your own past sales and the sub prices you collected, then suggests where to raise or lower. Nothing changes until you tap Use.</p>${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}</div>`;
+  const rows = S.cards.filter(c => inSale(c) && pc.items[c.id]).map(c => [c, pc.items[c.id]]);
+  const flagged = rows.filter(([c, r]) => r.verdict !== "ok" && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(c));
+  return `<div class="panel pick" id="pricecheck"><div class="row" style="justify-content:space-between"><h2>Price check <span class="note">${esc(dshort(pc.at))}</span></h2>
+      <span class="row" style="gap:6px"><button class="small" data-act="pcRun" ${busy}>Run again</button><button class="small" data-act="pcClear">Dismiss</button></span></div>
+    ${pc.summary ? `<p>${esc(pc.summary)}</p>` : ""}
+    <p class="note">${flagged.length ? plural(flagged.length, "ask looks", "asks look") + " off." : "Every ask looks right."} ${rows.length - flagged.length ? plural(rows.length - flagged.length, "item checks", "items check") + " out." : ""} Each card's Why panel keeps its result and evidence.</p>
+    ${flagged.length ? `<ul class="cards">${flagged.map(([c, r]) => `<li data-id="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ${r.verdict === "raise" ? "ok" : "warn"}">${r.verdict === "raise" ? "raise" : "lower"}</span></div>
+        <div class="meta">Ask ${money(priceOf(c))} → suggested <strong>${money(Number(r.suggest))}</strong>. ${esc(r.why || "")}</div>${evidenceList(r)}</div>
+        <div class="nums"><button class="small primary" data-act="pcUse" data-v="${Number(r.suggest)}">Use ${money(Number(r.suggest))}</button><button class="small" data-act="pcKeep">Keep ${money(priceOf(c))}</button></div></li>`).join("")}</ul>
+      ${flagged.length > 1 ? `<div class="row"><button class="primary" data-act="pcAll">Use all ${flagged.length} suggestions</button></div>` : ""}` : ""}
+    ${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}
+  </div>`;
+}
+function useSuggestion(c, v){
+  if(!(v > 0)) return;
+  c.price = v; if(c.isLot) c.fixed = true;
+  const r = S.priceCheck && S.priceCheck.items[c.id]; if(r){ r.verdict = "ok"; r.used = true; }
+}
+
+/* ---------- title and description, written on demand from the sale as it stands ---------- */
+async function writeCopy(){
+  const items = ordered().filter(inSale).filter(c => c.status !== "sold");
+  if(!items.length){ ui.cmdMsg = "Place some cards in the sale first."; return render(); }
+  if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
+  ui.busy = "Writing the title and description"; render();
+  try{
+    const sale = items.slice(0, 40).map(c => ({item:c.isLot ? c.player : lineName(c), kind:c.isLot ? "lot of " + c.members.length : c.pin === "page" ? "price page card" : "single", grade:c.isLot ? "" : c.grade || "", ask:priceOf(c)}));
+    const plan = S.plan && S.plan.text ? String(S.plan.text) : "";
+    const r = (await ai("postcopy", {sale, plan})) || {};
+    ui.copyOpts = {titles:(Array.isArray(r.titles) ? r.titles : []).map(String).filter(Boolean).slice(0, 3), intro:String(r.intro || "")};
+  }catch(e){ ui.cmdMsg = "That did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function copyBox(){
+  const o = ui.copyOpts;
+  return `<div class="row"><button class="small primary" data-act="pcopy" ${ui.busy ? "disabled" : ""}>${o ? "Write new options" : "Write title and description"}</button>${ui.busy === "Writing the title and description" ? `<span class="progress busy">Writing</span>` : ""}</div>
+    ${o ? `<div class="copyopts">${o.titles.map((t, i) => `<button class="small opt" data-act="useTitle" data-i="${i}">${esc(t)}</button>`).join("")}${o.intro ? `<button class="small opt" data-act="useIntro">${esc(o.intro)}</button>` : ""}<span class="note">Tap a title or the description to use it. You can still edit it below.</span></div>` : ""}`;
+}
+
+/* ---------- photo order: numbered strip, move earlier or later, save every photo in order ---------- */
+function photoRecord(ph){
+  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white"};
+}
+const photosWithCards = () => (ui.photos || []).filter(x => (x.cards || []).some(pc => pc.invId));
+function movePhoto(d){
+  const list = ui.photos || [], i = list.findIndex(x => ui.photo && x.id === ui.photo.id), j = i + d;
+  if(i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  list.forEach((x, k) => { x.ord = k + 1; idb("put", photoRecord(x)); });
+  if(photosWithCards().length){
+    if(S.settings.commentByPhoto) ui.cmdMsg = "Photo order changed. The price comment follows it.";
+    else ui.photoOrderAsk = true;
+  }
+}
+async function renderedBlob(x, plain){
+  if(!x.bmp) x.bmp = await createImageBitmap(x.blob);
+  const cv = document.createElement("canvas");
+  drawPhoto(cv, plain ? {...x, tags:[], title:"", note:""} : x);
+  return new Promise(r => cv.toBlob(r, "image/jpeg", .92));
+}
+async function saveAllPhotos(plain){
+  const list = ui.photos || []; if(!list.length) return;
+  ui.busy = "Preparing the photos"; render();
+  try{
+    const files = [];
+    for(const [i, x] of list.entries()){
+      const name = String(i + 1).padStart(2, "0") + "-" + (String(x.title || "photo").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "photo") + (plain ? "-plain" : "") + ".jpg";
+      files.push(new File([await renderedBlob(x, plain)], name, {type:"image/jpeg"}));
+    }
+    if(navigator.canShare && navigator.canShare({files})) await navigator.share({files});
+    else for(const f of files){ const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    ui.cmdMsg = `Saved ${plural(files.length, "photo", "photos")} in order${plain ? " without labels" : ""}.`;
+  }catch(e){ ui.cmdMsg = "The photos could not be saved here: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function orderAskBox(){
+  if(!ui.photoOrderAsk) return "";
+  return `<div class="check rq"><span><strong>Photo order changed.</strong> Put the price comment in the same order as the photos, so photo 1's cards come first?</span>
+    <div class="row"><button class="small primary" data-act="orderYes">Yes, follow the photos</button><button class="small" data-act="orderNo">No, keep it by section</button></div></div>`;
+}
 
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
@@ -1830,6 +1967,20 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "pauto") return autoPrice();
+  else if(act === "pcRun") return runCheck();
+  else if(act === "pcGo"){ go("#sale"); return runCheck(); }
+  else if(act === "pcClear"){ S.priceCheck = null; }
+  else if(act === "pcUse" && c){ useSuggestion(c, Number(el.dataset.v)); ui.cmdMsg = title(c) + " now asks " + money(priceOf(c)) + "."; }
+  else if(act === "pcKeep" && c){ const r = S.priceCheck && S.priceCheck.items[c.id]; if(r) r.verdict = "ok"; }
+  else if(act === "pcAll"){ let n = 0; for(const x of S.cards){ const r = S.priceCheck && S.priceCheck.items[x.id]; if(r && r.verdict !== "ok" && Number(r.suggest) > 0 && inSale(x)){ useSuggestion(x, Number(r.suggest)); n++; } } ui.cmdMsg = `Updated ${plural(n, "ask", "asks")}.`; }
+  else if(act === "pcopy") return writeCopy();
+  else if(act === "useTitle" && ui.copyOpts){ S.settings.title = ui.copyOpts.titles[+el.dataset.i] || S.settings.title; }
+  else if(act === "useIntro" && ui.copyOpts){ S.settings.intro = ui.copyOpts.intro || S.settings.intro; }
+  else if(act === "pMove"){ movePhoto(+el.dataset.d); return render(); }
+  else if(act === "pSaveAll") return saveAllPhotos(false);
+  else if(act === "pSaveAllPlain") return saveAllPhotos(true);
+  else if(act === "orderYes"){ S.settings.commentByPhoto = true; ui.photoOrderAsk = false; ui.cmdMsg = "The price comment now follows the photo order."; }
+  else if(act === "orderNo"){ ui.photoOrderAsk = false; }
   else if(act === "pColor"){ setTagStyle(null, el.dataset.c); }
   else if(act === "goComment") return go("#post", () => { const d = document.getElementById("pricecomment"); if(d) d.scrollIntoView({behavior:"smooth"}); });
   else if(act === "pSetText"){ ui.photo.msg = photoText(ui.photo.selRefs || [], String(ui.photoText ?? $("#ptagtext").value)); ui.photo.selRefs = []; ui.photoText = null; relabel(); }

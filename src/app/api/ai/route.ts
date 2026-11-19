@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, postCopyPrompt, priceCheckPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -37,7 +37,15 @@ export async function POST(req: Request) {
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
   else if (task === "locate") prompt = locatePrompt;
-  else if (task === "phototag") {
+  else if (task === "pricecheck") {
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!items.length || items.length > 30) return fail(400, "Send between 1 and 30 items to check.");
+    prompt = priceCheckPrompt(items, Math.min(60, Math.max(0, Number(payload.discount) || 0)), true);
+  } else if (task === "postcopy") {
+    const sale = Array.isArray(payload.sale) ? payload.sale : [];
+    if (!sale.length || sale.length > 60) return fail(400, "The sale is empty or too large.");
+    prompt = postCopyPrompt(sale, String(payload.plan ?? "").slice(0, 2000));
+  } else if (task === "phototag") {
     const text = String(payload.text ?? "");
     const cards = Array.isArray(payload.cards) ? payload.cards : [];
     if (!text || text.length > 2000 || cards.length > 500) return fail(400, "The instruction is missing or the photo has too many cards.");
@@ -84,17 +92,32 @@ export async function POST(req: Request) {
 
   try {
     const anthropic = new Anthropic();
-    const message = await anthropic.beta.messages.create({
-      model: "claude-opus-5-5",
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      output_config: { effort: task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate" ? "high" : "medium" },
-      messages: [{ role: "user", content }],
-    });
+    // The price check may search the web; a long search can pause the turn, so send the partial answer back to finish it.
+    const tools = task === "pricecheck" ? [{ type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 12 }] : undefined;
+    const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [{ role: "user", content }];
+    let message = null as Anthropic.Beta.Messages.BetaMessage | null;
+    for (let round = 0; round < 4; round++) {
+      message = await anthropic.beta.messages.create({
+        model: "claude-opus-5-5",
+        max_tokens: 16000,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        output_config: { effort: task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate" ? "high" : "medium" },
+        ...(tools ? { tools } : {}),
+        messages,
+      });
+      if (message.stop_reason !== "pause_turn") break;
+      messages.push({ role: "assistant", content: message.content });
+    }
+    if (!message) return fail(502, "No answer came back.");
     if (message.stop_reason === "refusal") return fail(422, "The model declined this request.", "refused");
-    const text = message.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    return Response.json(parseJson(text));
+    const texts = message.content.flatMap((b) => (b.type === "text" ? [b.text] : []));
+    const last = [...texts].reverse().find((t) => t.includes("{"));
+    try {
+      return Response.json(parseJson(last ?? texts.join("")));
+    } catch {
+      return Response.json(parseJson(texts.join("")));
+    }
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) return fail(429, "The AI service is busy. Wait a minute and try again.", "rate_limited");
     if (e instanceof Anthropic.APIError) return fail(502, "The AI service returned an error. Try again.", "upstream");

@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -196,6 +196,39 @@ Operations:
 - {"op":"show","ids":["p4"]}  bring a removed tag back.
 
 Return JSON only: {"ops":[...],"say":"one or two plain sentences on what changed"}`;
+}
+
+export function priceCheckPrompt(items: unknown, discount: number, web: boolean): string {
+  return `You are double-checking the asking prices in a vintage baseball card sale on r/baseballcards_vintage before it is posted.
+
+Items. Each has an id, what it is, its condition, the current ask in USD, the value range from the scan, any sold comp the seller entered, the seller's own past sales of the same card, and sale prices the seller collected from the subreddit:
+${JSON.stringify(items)}
+
+How this subreddit prices: asks are firm, buyers claim at the asking price, and there are no platform fees, so asks usually sit about ${discount}% under recent eBay sold prices for the same card in the same condition. Lots usually go a little under the total of their cards.
+
+For each item:
+${web ? "- Search the web for recent sold prices of this exact card in comparable condition: eBay sold listings, 130point, SportsCardsPro, and PSA auction prices for graded cards. Prefer sales from the last six months. Use as few searches as you need; a lot of commons or a cheap card does not need one." : "- Use your general knowledge of recent sold prices. You cannot search the web here, so say \"general knowledge\" as the source."}
+- Weigh the seller's own past sales and the collected subreddit prices above other prices when they exist, because they show what actually sells here.
+- "verdict": "ok" if the ask is within about 15% of where it should be, "raise" if it is clearly too low, "lower" if it is clearly too high to sell.
+- "suggest": the ask you recommend, rounded the way sellers do: $1 steps under $25, $5 steps above.
+- "why": one plain sentence.
+- "evidence": up to three entries like {"source":"eBay sold","price":70,"note":"VG, October 2026","url":"https://..."}. Include a url only for a page you actually saw.
+- Never suggest leaving room for offers.
+
+Return JSON only, at the very end of your answer: {"items":[{"id":"...","verdict":"ok","suggest":45,"why":"...","evidence":[]}],"summary":"one or two plain sentences on the sale overall"}`;
+}
+
+export function postCopyPrompt(sale: unknown, plan: string): string {
+  return `Write the title and opening lines for a sale post on r/baseballcards_vintage.
+
+The sale (items in order, with what kind of item each is and its ask in USD):
+${JSON.stringify(sale)}
+${plan ? "The seller's plan, in their words: " + plan : ""}
+
+- "titles": three different options, each under 120 characters, starting with "[FS]". Name the two or three strongest cards and the shape of the sale (singles, lots, price pages). Plain words, no hype, no emoji.
+- "intro": two or three plain sentences in the seller's own voice, first person singular ("I") on what is in the sale and how it is organized. Do not repeat payment or shipping terms. Asks are firm; never mention offers.
+
+Return JSON only: {"titles":["[FS] ...","[FS] ...","[FS] ..."],"intro":"..."}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
