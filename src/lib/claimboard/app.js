@@ -234,6 +234,7 @@ function vInventory(){
   ${groupPanel()}
   ${singlesPanel()}
   ${hasEx ? `<p class="flag">These rows are examples. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
+  ${dupPanel()}
   ${notesBox()}
   ${allCardsPanel()}
   <div class="panel" id="decide" data-jump="To decide">
@@ -1519,6 +1520,7 @@ function vSale(){
   const live = items.filter(c => c.status !== "sold"), total = live.reduce((a, c) => a + (priceOf(c) || 0), 0);
   const cards = cardTotal(items), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
   return `<section class="view"><div class="panel" data-jump="Summary"><h2>Your sale so far</h2>
+    ${overviewBox()}
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <button class="chipbtn warn" data-act="showUnpriced">${unpriced} without a price ›</button>` : ""}</p>
     ${unpricedBox(items)}
@@ -1549,7 +1551,7 @@ function progressBar(){
   const cands = [
     ["scan", !real.length, 0, "Scan a photo of your cards, or start from a sale photo on the Photos tab.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}],
     ["checks", checks, checks, `${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}],
-    ["dups", S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, `${plural(S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, "card looks", "cards look")} like a duplicate of one you already have.`, {href:"#inventory", label:"Review them"}],
+    ["dups", dupList().length, dupList().length, `${plural(dupList().length, "card looks", "cards look")} like a duplicate of one you already have.`, {act:"dupGo", label:"Review them"}],
     ["goal", S.goal && decide >= 2, decide, `Sort the ${decide} cards still to place into your plan: ${String(S.goal || "").length > 90 ? String(S.goal).slice(0, 87) + "..." : S.goal || ""}`, {act:"goalApply", label:"Sort to my plan"}],
     ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
     ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
@@ -2799,7 +2801,7 @@ function allCardsPanel(){
   const page = numOrNull(ui.pagePrice) || 10, open = ui.dopen.allcards ?? false;
   return `<details class="panel" data-jump="All cards" data-dk="allcards" ${open ? "open" : ""}><summary><strong>All my cards</strong> <span class="note">${rows.length}, wherever they are</span></summary>
     <p class="note">Every card you have entered, including ones already placed in singles, pages and lots. Fix any detail, change an ask, or move a card. Undo is in the bar at the top after a move.</p>
-    <input id="acq" value="${esc(ui.acQ || "")}" placeholder="Search: 1969, Aaron, PSA, lot name">
+    <div class="row"><input id="acq" class="grow" value="${esc(ui.acQ || "")}" placeholder="Search: 1969, Aaron, PSA, lot name"><button class="small" data-act="findDups">Find duplicates</button></div>${ui.dupMsg ? `<p class="note">${esc(ui.dupMsg)}</p>` : ""}
     <div class="exs">${AC_FILTERS.map(([k, l]) => `<button class="chipbtn ${f === k ? "on" : ""}" data-act="acFilter" data-k="${k}" ${counts[k] || k === "all" ? "" : "disabled"}>${l} ${counts[k]}</button>`).join("")}</div>
     <ul class="cards">${shown.slice(0, 150).map(x => { const c = x.c, id = c.id;
       return `<li><div><div class="ttl">${esc(title(c))}</div><div class="meta">${esc([c.grade, acWhere(x)].filter(Boolean).join(" · "))}</div>
@@ -2828,6 +2830,37 @@ function unpricedBox(items){
   const list = items.filter(c => c.status === "open" && priceOf(c) == null);
   return `<div class="check rq" id="unpriced"><strong>${list.length ? "No price yet" : "Everything has a price now."}</strong>${list.map(c => `<div class="row"><span class="grow">${esc(c.isLot ? c.player : title(c))}${c.isLot && lotN(c) > c.members.length ? ` · ${lotN(c) - c.members.length} cards not listed` : ""}</span><label class="inline">Ask $<input class="money" data-sask="${c.id}" inputmode="decimal" placeholder="$"></label>${c.isLot ? `<button class="small primary" data-act="lotEval" data-lid="${c.id}" ${ui.busy ? "disabled" : ""}>Price this lot properly</button>` : `<button class="small" data-act="pcOne" data-cid="${c.id}" ${ui.busy ? "disabled" : ""}>Check this price</button>`}</div>`).join("")}
     <div class="row"><button class="small" data-act="showUnpriced">Close</button></div></div>`;
+}
+
+/* ---------- duplicates across everything entered: pairs to remove or keep ---------- */
+const dupList = () => allCards().filter(x => x.c.dupOf && findCard(x.c.dupOf));
+function findDuplicates(){
+  const dn = v => String(v ?? "").trim().toLowerCase(), seen = [], rows = allCards();
+  let n = 0;
+  for(const x of rows){
+    const c = x.c; if(c.dupOk) continue;
+    const twin = seen.find(p => dn(p.year) === dn(c.year) && dn(p.set) === dn(c.set) && dn(p.player) === dn(c.player) && dn(p.player) && (!p.num || !c.num || dn(p.num) === dn(c.num)) && dn(p.variation) === dn(c.variation));
+    if(twin && c.dupOf !== twin.id){ c.dupOf = twin.id; n++; }
+    else if(!twin) seen.push(c);
+  }
+  return n;
+}
+function dupPanel(){
+  const ds = dupList(); if(!ds.length) return "";
+  const where = id => { const f = findCard(id); return f ? (f.lot ? "in " + f.lot.player.replace(/\s*\(\d+ cards?\)$/, "") : f.c.status !== "open" ? f.c.status : f.c.section ? "in " + f.c.section : "to decide") : ""; };
+  return `<div class="panel pick" data-jump="Duplicates"><h2>Possible duplicates <span class="note">${ds.length}</span></h2>
+    <p class="note">Cards that match one you already have: same year, set, number and player. Remove the extra, or keep both if you really have two copies.</p>
+    <ul class="cards">${ds.map(x => { const c = x.c, o = findCard(c.dupOf).c;
+      return `<li><div><div class="ttl">${esc(title(c))}</div><div class="meta">This one: ${esc([c.grade, where(c.id)].filter(Boolean).join(", "))}. The other: ${esc([o.grade, where(o.id)].filter(Boolean).join(", "))}.</div></div>
+        <div class="nums"><button class="small danger" data-act="dupDel" data-cid="${c.id}">Remove this one</button><button class="small" data-act="dupDel" data-cid="${o.id}" data-keep="${c.id}">Remove the other</button><button class="small" data-act="dupOk" data-cid="${c.id}">Keep both</button></div></li>`; }).join("")}</ul></div>`;
+}
+
+/* ---------- describe the sale as it should be: the tool compares and adjusts ---------- */
+function overviewBox(){
+  return `<div class="say"><label for="ovtext"><strong>Describe the sale as it should be</strong></label>
+    <span class="note">Say it at a high level and the tool changes whatever does not match, for example "The 1969 lot is 120 cards. All the Ted Williams go together at $160. Everything under $5 goes on a $3 page."</span>
+    <textarea id="ovtext" style="min-height:70px;font-family:var(--body)" placeholder="What the sale is made of, in your words">${esc(ui.ovText || "")}</textarea>
+    <div class="row"><button class="small primary" data-act="overview" ${ui.busy ? "disabled" : ""}>Adjust the sale</button>${ui.ovMsg ? `<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.cmdMsg || "")}</span>` : ""}</div></div>`;
 }
 
 /* ---------- render + events ---------- */
@@ -2918,6 +2951,11 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "dupGo"){ go("#inventory", () => { const t = document.querySelector('[data-jump="Duplicates"]'); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
+  else if(act === "findDups"){ const n = findDuplicates(); ui.cmdMsg = n ? `Found ${plural(n, "possible duplicate", "possible duplicates")}. They are listed on Review under Possible duplicates.` : "No duplicates found."; ui.dupMsg = ui.cmdMsg; }
+  else if(act === "dupDel"){ ui.undo = JSON.stringify(S); const keep = el.dataset.keep && findCard(el.dataset.keep); take(el.dataset.cid); if(keep) delete keep.c.dupOf; allCards().forEach(x => { if(x.c.dupOf === el.dataset.cid) delete x.c.dupOf; }); ui.cmdMsg = "Removed. Undo is in the bar at the top."; }
+  else if(act === "dupOk"){ const f = findCard(el.dataset.cid); if(f){ delete f.c.dupOf; f.c.dupOk = true; } }
+  else if(act === "overview"){ const t = String(ui.ovText || "").trim(); if(!t){ ui.cmdMsg = "Describe the sale first."; ui.ovMsg = true; return render(); } ui.ovMsg = true; ui.cmd = "Here is how the seller says the sale should look overall. Compare it with the inventory and settings, change whatever differs, and leave what already matches alone. If something they describe matches no card, say so: " + t; return runCmd(); }
   else if(act === "showUnpriced"){ ui.showUnpriced = !ui.showUnpriced; }
   else if(act === "acFilter"){ ui.acFilter = el.dataset.k; ui.dopen.allcards = true; return render(); }
   else if(act === "lotEval"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot) return lotEval(f.c); }
@@ -3071,6 +3109,7 @@ document.addEventListener("change", e => {
   if(t.dataset.invlabel){ const f = findCard(t.dataset.invlabel); if(f){ f.c.invLabel = t.value.trim(); save(); } return; }
   if(t.dataset.invnums){ const f = findCard(t.dataset.invnums); if(f && f.c.inv){ const out = []; for(const m of String(t.value).matchAll(/\d+/g)) out.push(+m[0]); f.c.inv.list = out.filter(n => n > 0); f.c.inv.unread = 0; save(); } return render(); }
   if(t.id === "wanttext"){ ui.wantText = t.value; return; }
+  if(t.id === "ovtext"){ ui.ovText = t.value; return; }
   if(t.id === "goaltext"){ ui.goalDraft = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
   if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.c.isLot) f.c.fixed = v > 0; if(f.lot) relot(f.lot); save(); } return render(); }
@@ -3124,7 +3163,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "ovtext") ui.ovText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
