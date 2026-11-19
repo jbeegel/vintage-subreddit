@@ -1247,7 +1247,7 @@ function idb(op, arg){
 function keepPhoto(){
   const ph = ui.photo; if(!ph || !ph.blob) return;
   clearTimeout(ui.photoT);
-  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
+  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white"}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
 }
 async function loadPhotos(){
   const all = await idb("all");
@@ -1267,7 +1267,7 @@ async function loadPhoto(file){
     const src = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(src.width, src.height)), w = Math.round(src.width * k), h = Math.round(src.height * k);
     const cv = document.createElement("canvas"); cv.width = w; cv.height = h; cv.getContext("2d").drawImage(src, 0, 0, w, h);
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
-    ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
+    ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, scale:Number(S.settings.tagScale) || 1, color:S.settings.tagColor || "white", tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     setPhotoTarget(""); /* no headline by default: a band across the top would cover the handwritten note */
     ui.photos = [ui.photo, ...(ui.photos || [])]; ui.photoErr = "";
   }catch(e){ ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
@@ -1294,14 +1294,14 @@ function drawPhoto(){
   const sw = g.measureText(stamp).width + 2 * u, sh = 4 * u;
   g.fillStyle = "rgba(10,18,15,.84)"; g.fillRect(ph.w - sw, ph.h - sh, sw, sh); g.fillStyle = "#fff"; g.fillText(stamp, ph.w - sw + u, ph.h - sh + .8 * u);
   for(const t of ph.tags){
-    const s = t.s || 3, k = s / 3;
+    const s = (t.s || 3) * tagScale(ph), k = s / 3, col = TAG_COLORS[tagColor(ph)];
     g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
     const w = g.measureText(t.text).width + 1.8 * u * k, h = 4.6 * u * k, x = Math.min(ph.w - w, Math.max(0, t.x * ph.w - w / 2)), y = Math.min(ph.h - h, Math.max(0, t.y * ph.h - h / 2));
     const on = t.ref && (ph.selRefs || []).includes(t.ref);
-    g.fillStyle = on ? "#dff3fb" : "#fff"; g.strokeStyle = on ? "#0073a2" : "#0a120f"; g.lineWidth = (on ? .7 : .35) * u * k;
+    g.fillStyle = on ? "#dff3fb" : col[0]; g.strokeStyle = on ? "#0073a2" : col[2]; g.lineWidth = (on ? .7 : .35) * u * k;
     t.box = {x, y, w, h};
     g.beginPath(); g.roundRect(x, y, w, h, .8 * u * k); g.fill(); g.stroke();
-    g.fillStyle = "#0a120f"; g.fillText(t.text, x + .9 * u * k, y + .9 * u * k);
+    g.fillStyle = on ? "#0a120f" : col[1]; g.fillText(t.text, x + .9 * u * k, y + .9 * u * k);
   }
   keepPhoto();
 }
@@ -1366,6 +1366,7 @@ function vPhotos(){
       <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
     </div>
     <div class="row"><button class="primary" data-act="pauto" ${ui.busy ? "disabled" : ""}>Price every card automatically</button>${photoExtra(ph).length ? `<button class="small" data-act="pfoundAdd">Add the ${photoExtra(ph).length} new card${photoExtra(ph).length === 1 ? "" : "s"} to Review</button>` : ""}<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || "Finds every card, matches it to your inventory and puts its ask under it.")}</span></div>
+    ${styleRow(ph)}
     ${photoEditBox(ph)}
     <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
       <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
@@ -1487,6 +1488,23 @@ async function clearChosen(){
   ui.sel.clear();
   if(!done.length) return "Nothing was cleared.";
   return "Cleared " + done.join(", ") + "." + (done.length === 1 && p.photos ? "" : " Undo brings it back" + (p.photos ? ", except photos." : "."));
+}
+
+/* tag colors: background, text and outline */
+const TAG_COLORS = {white:["#ffffff", "#0a120f", "#0a120f"], black:["#0a120f", "#ffffff", "#ffffff"], yellow:["#ffd400", "#0a120f", "#0a120f"], orange:["#fc7313", "#ffffff", "#ffffff"], green:["#1b6a49", "#ffffff", "#ffffff"], blue:["#0073a2", "#ffffff", "#ffffff"], red:["#c62828", "#ffffff", "#ffffff"]};
+const tagScale = ph => Math.min(2, Math.max(.5, Number(ph && ph.scale) || 1));
+const tagColor = ph => TAG_COLORS[ph && ph.color] ? ph.color : "white";
+function setTagStyle(scale, color){
+  const ph = ui.photo; if(!ph) return;
+  if(scale != null && !isNaN(scale)) ph.scale = Math.min(2, Math.max(.5, Math.round(Number(scale) * 10) / 10));
+  if(color && TAG_COLORS[color]) ph.color = color;
+  S.settings.tagScale = ph.scale || 1; S.settings.tagColor = tagColor(ph);
+  if(ph.cards) relabel(); else ph.out = null;
+  save();
+}
+function styleRow(ph){
+  return `<div class="row tagstyle"><label class="inline">Tag size <input type="range" id="ptagsize" min="0.5" max="2" step="0.1" value="${tagScale(ph)}" aria-label="Tag size"> <span class="note">${Math.round(tagScale(ph) * 100)}%</span></label>
+    <span class="row" style="gap:6px">${Object.entries(TAG_COLORS).map(([k, c]) => `<button class="swatch ${tagColor(ph) === k ? "on" : ""}" data-act="pColor" data-c="${k}" style="background:${c[0]};color:${c[1]}" aria-label="${k} tags" title="${k}">$</button>`).join("")}</span></div>`;
 }
 
 /* ---------- photo tags as data: each found card, the lots on the photo, and what is hidden ---------- */
@@ -1611,6 +1629,7 @@ async function photoInstr(){
       else if(o.op === "price") said.push(photoPrice(ids, Number(o.price)));
       else if(o.op === "hide"){ ph.hidden = [...new Set([...(ph.hidden || []), ...ids.filter(id => pcard(id))])]; ph.groups.forEach(g => { g.ids = g.ids.filter(id => !ids.includes(id)); }); }
       else if(o.op === "show") ph.hidden = (ph.hidden || []).filter(id => !ids.includes(id));
+      else if(o.op === "style"){ setTagStyle(o.scale != null ? Number(o.scale) * tagScale(ph) : null, o.color ? String(o.color).toLowerCase() : null); said.push("Tags restyled."); }
     }
     ph.selRefs = []; ui.photoInstr = ""; ui.photoAsk = null; relabel(); save();
     ph.msg = (r.say ? String(r.say) + " " : "") + said.filter(Boolean).join(" ");
@@ -1621,7 +1640,7 @@ async function photoInstr(){
 /* ---------- auto-price a photo: find each card, match it to the inventory, size and place a tag under it ---------- */
 function layoutTags(items){
   const ph = ui.photo, u = Math.max(ph.w, ph.h) / 100, g = document.createElement("canvas").getContext("2d"), placed = [], out = [];
-  const meas = (txt, s) => { g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`; return {w:g.measureText(txt).width + .6 * s * u, h:1.53 * s * u}; };
+  const sc = tagScale(ph), meas = (txt, s0) => { const s = s0 * sc; g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`; return {w:g.measureText(txt).width + .6 * s * u, h:1.53 * s * u}; };
   const area = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
   const rects = items.map(it => ({x:it.box.x0 * ph.w, y:it.box.y0 * ph.h, w:(it.box.x1 - it.box.x0) * ph.w, h:(it.box.y1 - it.box.y0) * ph.h}));
   for(const [i, it] of items.entries()){
@@ -1811,6 +1830,7 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "pauto") return autoPrice();
+  else if(act === "pColor"){ setTagStyle(null, el.dataset.c); }
   else if(act === "goComment") return go("#post", () => { const d = document.getElementById("pricecomment"); if(d) d.scrollIntoView({behavior:"smooth"}); });
   else if(act === "pSetText"){ ui.photo.msg = photoText(ui.photo.selRefs || [], String(ui.photoText ?? $("#ptagtext").value)); ui.photo.selRefs = []; ui.photoText = null; relabel(); }
   else if(act === "pSelNone"){ ui.photo.selRefs = []; ui.photoAsk = null; ui.photoText = null; }
@@ -1882,6 +1902,7 @@ document.addEventListener("change", e => {
   if(t.id === "pselmode"){ ui.photoSelect = t.checked; if(!t.checked && ui.photo) ui.photo.selRefs = []; return render(); }
   if(t.id === "paskval"){ ui.photoAsk = t.value; return; }
   if(t.id === "pinstr"){ ui.photoInstr = t.value; return; }
+  if(t.id === "ptagsize"){ setTagStyle(Number(t.value), null); return render(); }
   if(t.id === "ptagtext"){ ui.photoText = t.value; return; }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
@@ -1914,7 +1935,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }

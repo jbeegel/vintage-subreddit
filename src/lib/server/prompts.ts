@@ -192,6 +192,7 @@ Operations:
 - {"op":"ungroup","ids":["g0"]}  split lots back into single tags.
 - {"op":"price","ids":["p3"],"price":25}  set the ask for cards or lots.
 - {"op":"hide","ids":["p4"]}  no tag for these cards (not for sale).
+- {"op":"style","scale":1.3,"color":"yellow"}  change every tag's look. "scale" multiplies the current size (1.3 is 30% bigger, 0.8 is 20% smaller); "color" is one of white, black, yellow, orange, green, blue, red. Give either or both.
 - {"op":"show","ids":["p4"]}  bring a removed tag back.
 
 Return JSON only: {"ops":[...],"say":"one or two plain sentences on what changed"}`;
