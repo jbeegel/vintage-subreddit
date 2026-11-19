@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, postCopyPrompt, priceCheckPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -45,6 +45,11 @@ export async function POST(req: Request) {
     const sale = Array.isArray(payload.sale) ? payload.sale : [];
     if (!sale.length || sale.length > 60) return fail(400, "The sale is empty or too large.");
     prompt = postCopyPrompt(sale, String(payload.plan ?? "").slice(0, 2000));
+  } else if (task === "pricelist") {
+    const cards = Array.isArray(payload.cards) ? payload.cards : [], listText = String(payload.text ?? "").slice(0, 20000);
+    if (!cards.length || cards.length > 500) return fail(400, "The photo has no cards or too many.");
+    if (!listText.trim() && images.length < 1) return fail(400, "Paste a price list or send a photo of one.");
+    prompt = priceListPrompt(cards, Array.isArray(payload.groups) ? payload.groups : [], listText, images.length);
   } else if (task === "phototag") {
     const text = String(payload.text ?? "");
     const cards = Array.isArray(payload.cards) ? payload.cards : [];

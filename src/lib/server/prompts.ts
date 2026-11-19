@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -200,6 +200,7 @@ Operations:
 - {"op":"tag","ids":["g0"],"text":"$50 shipped"}  change the words on existing tags. An empty text goes back to the plain ask.
 - {"op":"ungroup","ids":["g0"]}  split lots back into single tags.
 - {"op":"price","ids":["p3"],"price":25}  set the ask for cards or lots.
+- {"op":"adjust","ids":["p3","g0"],"pct":-10}  raise or lower asks by a percentage. For "everything", list every id.
 - {"op":"hide","ids":["p4"]}  no tag for these cards (not for sale).
 - {"op":"style","scale":1.3,"color":"yellow"}  change every tag's look. "scale" multiplies the current size (1.3 is 30% bigger, 0.8 is 20% smaller); "color" is one of white, black, yellow, orange, green, blue, red. Give either or both.
 - {"op":"show","ids":["p4"]}  bring a removed tag back.
@@ -238,6 +239,28 @@ ${plan ? "The seller's plan, in their words: " + plan : ""}
 - "intro": two or three plain sentences in the seller's own voice, first person singular ("I") on what is in the sale and how it is organized. Do not repeat payment or shipping terms. Asks are firm; never mention offers.
 
 Return JSON only: {"titles":["[FS] ...","[FS] ...","[FS] ..."],"intro":"..."}`;
+}
+
+export function priceListPrompt(cards: unknown, groups: unknown, text: string, images: number): string {
+  return `A seller is pricing the cards in a sale photo of vintage baseball cards from their own price list.
+
+Cards found in the photo, in reading order (top row first, left to right), with ids, position numbers, names and current asks in USD:
+${JSON.stringify(cards)}
+
+Lots already on the photo (one tag for several cards):
+${JSON.stringify(groups)}
+${text ? `
+The seller's price list, as pasted:
+"""${text}"""` : ""}${images ? `
+The attached ${images === 1 ? "image shows" : "images show"} the seller's price list, handwritten or printed. Read every line.` : ""}
+
+Match each line of the list to the card or lot it prices. Lists are informal: "69 Aaron 45", "Gibson - $40", "Teds lot 35", "#3 $12" (a bare number can mean the position number above). A name may be a last name or a nickname.
+- Use only ids above. Never invent cards.
+- A line that prices several cards together goes in "groups": use an existing lot id in "prices" if one matches, otherwise list the card ids.
+- A line you cannot place goes in "unmatched", word for word.
+- Asks are firm on this subreddit; take the seller's numbers as written.
+
+Return JSON only: {"prices":[{"id":"p3","price":40,"line":"Gibson $40"}],"groups":[{"ids":["p10","p11","p12"],"price":35,"line":"Teds lot 35"}],"unmatched":["..."],"say":"one plain sentence"}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
