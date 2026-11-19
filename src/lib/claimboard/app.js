@@ -1520,7 +1520,8 @@ function vSale(){
   const cards = cardTotal(items), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
   return `<section class="view"><div class="panel" data-jump="Summary"><h2>Your sale so far</h2>
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
-    <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
+    <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <button class="chipbtn warn" data-act="showUnpriced">${unpriced} without a price ›</button>` : ""}</p>
+    ${unpricedBox(items)}
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
     <div class="row"><a class="btn primary" href="#post">Build the post</a><button class="small" data-act="goComment">Price comment</button>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
     ${priceCheckPanel()}
@@ -2821,6 +2822,14 @@ function moveCard(id, to){
   S.cards.push(c); return `${name} is back in To decide.`;
 }
 
+/* ---------- things with no price yet: tap the count on the Sale tab to fix them in place ---------- */
+function unpricedBox(items){
+  if(!ui.showUnpriced) return "";
+  const list = items.filter(c => c.status === "open" && priceOf(c) == null);
+  return `<div class="check rq" id="unpriced"><strong>${list.length ? "No price yet" : "Everything has a price now."}</strong>${list.map(c => `<div class="row"><span class="grow">${esc(c.isLot ? c.player : title(c))}${c.isLot && lotN(c) > c.members.length ? ` · ${lotN(c) - c.members.length} cards not listed` : ""}</span><label class="inline">Ask $<input class="money" data-sask="${c.id}" inputmode="decimal" placeholder="$"></label>${c.isLot ? `<button class="small primary" data-act="lotEval" data-lid="${c.id}" ${ui.busy ? "disabled" : ""}>Price this lot properly</button>` : `<button class="small" data-act="pcOne" data-cid="${c.id}" ${ui.busy ? "disabled" : ""}>Check this price</button>`}</div>`).join("")}
+    <div class="row"><button class="small" data-act="showUnpriced">Close</button></div></div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2909,6 +2918,7 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "showUnpriced"){ ui.showUnpriced = !ui.showUnpriced; }
   else if(act === "acFilter"){ ui.acFilter = el.dataset.k; ui.dopen.allcards = true; return render(); }
   else if(act === "lotEval"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot) return lotEval(f.c); }
   else if(act === "lotEvalAll") return lotEvalAll();
@@ -3063,7 +3073,7 @@ document.addEventListener("change", e => {
   if(t.id === "wanttext"){ ui.wantText = t.value; return; }
   if(t.id === "goaltext"){ ui.goalDraft = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
-  if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.lot) relot(f.lot); save(); } return render(); }
+  if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.c.isLot) f.c.fixed = v > 0; if(f.lot) relot(f.lot); save(); } return render(); }
   if(t.dataset.ef){ const f = findCard(t.dataset.eid); if(f){ const k = t.dataset.ef, v = t.value.trim(); f.c[k] = k === "price" ? (numOrNull(v) > 0 ? numOrNull(v) : null) : k === "year" && /^\d{4}$/.test(v) ? +v : v; if(k === "flaws"){ f.c.flawsOk = true; } delete f.c.example; if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); } save(); } return render(); }
   if(t.dataset.mv){ const to = t.value; if(to){ ui.cmdMsg = moveCard(t.dataset.mv, to); ui.dopen.allcards = true; save(); } return render(); }
   if(t.id === "acq"){ ui.acQ = t.value; ui.dopen.allcards = true; return render(); }
