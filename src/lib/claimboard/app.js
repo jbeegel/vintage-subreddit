@@ -1041,11 +1041,50 @@ function setPhotoTarget(key){
 }
 const photoQueue = () => (photoTargets().find(x => x.key === ui.photo.key) || {queue:[]}).queue;
 const nextTag = () => ui.photo.tagText ?? photoQueue()[ui.photo.qi] ?? "";
+/* Photos and their labels are kept in the browser's own database on this device, so a refresh or an update does not lose them. */
+function idb(op, arg){
+  return new Promise(res => {
+    try{
+      const open = indexedDB.open("rst-photos", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("photos", {keyPath:"id"});
+      open.onerror = () => res(null);
+      open.onsuccess = () => {
+        try{
+          const db = open.result, tx = db.transaction("photos", op === "all" ? "readonly" : "readwrite"), st = tx.objectStore("photos");
+          const rq = op === "all" ? st.getAll() : op === "put" ? st.put(arg) : st.delete(arg);
+          tx.oncomplete = () => { res(op === "all" ? rq.result : true); db.close(); };
+          tx.onerror = tx.onabort = () => { res(null); db.close(); };
+        }catch(e){ res(null); }
+      };
+    }catch(e){ res(null); }
+  });
+}
+function keepPhoto(){
+  const ph = ui.photo; if(!ph || !ph.blob) return;
+  clearTimeout(ui.photoT);
+  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text}) => ({x, y, text}))}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
+}
+async function loadPhotos(){
+  const all = await idb("all");
+  const mem = ui.photos || [], have = new Set(mem.map(x => x.id));
+  ui.photos = [...mem, ...(all || []).filter(r => !have.has(r.id)).map(r => ({...r, tagText:null, out:null, msg:""}))].sort((a, b) => b.at - a.at);
+  ui.photoKept = all != null;
+  if(location.hash === "#photos") render();
+}
+async function openPhoto(id){
+  const ph = (ui.photos || []).find(x => x.id === id); if(!ph) return;
+  try{ if(!ph.bmp) ph.bmp = await createImageBitmap(ph.blob); ui.photo = ph; }catch(e){ ui.photoErr = "That saved photo could not be opened."; }
+  render();
+}
+const thumbUrl = x => ((ui.thumbs = ui.thumbs || {})[x.id] = ui.thumbs[x.id] || URL.createObjectURL(x.blob));
 async function loadPhoto(file){
   try{
-    const bmp = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-    ui.photo = {bmp, w:Math.round(bmp.width * k), h:Math.round(bmp.height * k), tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
+    const src = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(src.width, src.height)), w = Math.round(src.width * k), h = Math.round(src.height * k);
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h; cv.getContext("2d").drawImage(src, 0, 0, w, h);
+    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
+    ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     const first = photoTargets()[1]; setPhotoTarget(first ? first.key : "");
+    ui.photos = [ui.photo, ...(ui.photos || [])]; ui.photoErr = "";
   }catch(e){ ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
   render();
 }
@@ -1077,6 +1116,7 @@ function drawPhoto(){
     g.beginPath(); g.roundRect(x, y, w, h, .8 * u); g.fill(); g.stroke();
     g.fillStyle = "#0a120f"; g.fillText(t.text, x + .9 * u, y + .9 * u);
   }
+  keepPhoto();
 }
 /* Drag a tag to move it. A press that starts on a tag never places a new one. */
 function tagAt(pt){
@@ -1126,8 +1166,10 @@ function vPhotos(){
   const ph = ui.photo, ts = photoTargets();
   return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
     <p class="note">Take the picture, and the tool writes the headline, notes, numbers and prices onto it, with your username and today's date. No paper labels, no drawing on screenshots.</p>
-    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${ph ? "Use a different photo" : "Take or choose a photo"}</button>
+    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${(ui.photos || []).length ? "Add another photo" : "Take or choose a photo"}</button>
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
+    ${(ui.photos || []).length ? `<div class="row thumbs">${ui.photos.map(x => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
+    <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
     ${ph ? `<div class="two">
       <label>This photo shows<select id="ph-target">${ts.map(t => `<option value="${esc(t.key)}" ${t.key === ph.key ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
       <label>Your Reddit username, for the stamp<input id="set-handle" value="${esc(S.settings.handle || "")}" placeholder="username"></label>
@@ -1138,7 +1180,7 @@ function vPhotos(){
       <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
     <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} Drag any tag to move it.</p>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;cursor:crosshair;touch-action:manipulation" aria-label="Photo with labels. Tap to place the next tag."></canvas>
-    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><span class="note">${esc(ph.msg || "")}</span></div>
+    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><button class="small" data-act="pdel">Delete this photo</button><span class="note">${esc(ph.msg || "")}</span></div>
     ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
     <p class="note">A typed username and date may not count as proof of possession on every subreddit. Keep a handwritten note in the shot until the mods confirm a printed stamp is accepted.</p>` : ""}
   </div></section>`;
@@ -1181,6 +1223,13 @@ document.addEventListener("click", async e => {
   else if(act === "learn") return learnThread();
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
+  else if(act === "popen") return openPhoto(el.dataset.pid);
+  else if(act === "pdel" && ui.photo){
+    const id = ui.photo.id; clearTimeout(ui.photoT); await idb("del", id);
+    ui.photos = (ui.photos || []).filter(x => x.id !== id);
+    if(ui.thumbs && ui.thumbs[id]){ URL.revokeObjectURL(ui.thumbs[id]); delete ui.thumbs[id]; }
+    ui.photo = null; return render();
+  }
   else if(act === "ptagUndo" && ui.photo){ const t = ui.photo.tags.pop(); if(t && ui.photo.qi > 0 && photoQueue()[ui.photo.qi - 1] === t.text) ui.photo.qi--; ui.photo.out = null; return render(); }
   else if(act === "ptagClear" && ui.photo){ ui.photo.tags = []; ui.photo.qi = 0; ui.photo.out = null; return render(); }
   else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = p.join(", "); c.flawsOk = true; }
@@ -1258,5 +1307,5 @@ document.addEventListener("change", e => {
 
 document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; });
 document.addEventListener("keydown", e => { if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
-loadLocal(); purgeAddresses(); render(); init(makeSupabase);
+loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }

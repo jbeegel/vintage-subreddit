@@ -46,6 +46,11 @@ details.why dd{margin:0;overflow-wrap:anywhere}
 .chipbtn.off{text-decoration:line-through;background:transparent;color:var(--muted)}
 .val.hist{font-weight:400;color:var(--muted)}
 .val.hist button{margin-left:4px}
+.thumbs{align-items:stretch}
+.thumb{padding:4px;border:1px solid var(--line);width:92px;display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:500;text-align:left}
+.thumb img{width:100%;height:64px;object-fit:cover;border-radius:3px;display:block}
+.thumb.on{border:2px solid var(--accent)}
+.thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
