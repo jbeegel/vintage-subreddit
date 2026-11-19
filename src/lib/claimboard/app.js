@@ -974,8 +974,8 @@ function applyPlan(r, text){
   if(r.intro) S.settings.intro = String(r.intro);
   S.settings.sort = "added";
 }
-async function runPlan(){
-  const text = (($("#plantext") || {}).value || "").trim();
+async function runPlan(textArg){
+  const text = String(textArg || ($("#plantext") || {}).value || "").trim();
   if(!text){ ui.planMsg = "Describe the sale first, or tap a starting point above."; return render(); }
   if(!cap.ai){ ui.planMsg = aiOff(); return render(); }
   ui.planDraft = text; ui.busy = ui.planMsg = "Sorting your cards into the plan"; render();
@@ -995,7 +995,7 @@ function planPanel(){
   return `<div class="panel"><h2>Plan the sale</h2>
     <p class="note">Say how you want to run it, in your own words. The tool sorts every open card into singles and lots to match, prices the lots, writes the title and opening lines, and lists the photos to take. Scan your cards first.</p>
     <div class="row">${PRESETS.map((t, i) => `<button class="small" data-act="preset" data-i="${i}">${esc(t.split(".")[0])}</button>`).join("")}</div>
-    <textarea id="plantext" style="min-height:84px;font-family:var(--body)" placeholder="A page or two of singles, then everything else in lots, mostly by year but maybe some other groupings.">${esc(ui.planDraft ?? (p ? p.text : ""))}</textarea>
+    <textarea id="plantext" style="min-height:84px;font-family:var(--body)" placeholder="A page or two of singles, then everything else in lots, mostly by year but maybe some other groupings.">${esc(ui.planDraft ?? (p ? p.text : S.goal || ""))}</textarea>
     <div class="row"><button class="primary" data-act="plan" ${ui.busy || n < 2 ? "disabled" : ""}>${p ? "Rebuild the sale" : "Build the sale"}</button>
       <label class="inline">Lots priced <input class="money" id="set-lotDiscount" type="number" min="0" max="60" value="${esc(S.settings.lotDiscount ?? 10)}" style="width:60px">% under the cards' total</label>
       ${p ? `<button class="small" data-act="unplan">Undo plan</button>` : ""}</div>
@@ -1526,6 +1526,7 @@ function progressBar(){
   const cands = [
     ["scan", !real.length, 0, "Scan a photo of your cards, or start from a sale photo on the Photos tab.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}],
     ["checks", checks, checks, `${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}],
+    ["goal", S.goal && decide >= 2, decide, `Sort the ${decide} cards still to place into your plan: ${String(S.goal || "").length > 90 ? String(S.goal).slice(0, 87) + "..." : S.goal || ""}`, {act:"goalApply", label:"Sort to my plan"}],
     ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
     ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
     ["count", S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, "lot needs", "lots need")} a card count. Unique cards drive a year lot's price.`, {href:"#sale", label:"Add counts"}],
@@ -1540,7 +1541,7 @@ function progressBar(){
   const next = [pick[3], pick[4]], skipped = cands.filter(x => x[1] && sk[x[0]] === String(x[2])).length;
   ui.nextKey = ["live", "post", "scan"].includes(pick[0]) ? "" : pick[0]; ui.nextSig = String(pick[2]); ui.nextText = pick[3];
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
-  return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog"><ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
+  return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog">${goalLine()}<ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
     <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button><button class="small danger" data-act="startOver">Start over</button></span></div>
     ${skipped ? `<p class="note">${plural(skipped, "step is", "steps are")} set aside. <button class="small" data-act="nextBack">Bring ${skipped === 1 ? "it" : "them"} back</button></p>` : `<p class="note">Disagree? Say so in the box below, for example "skip the price check, I priced these from my own comps".</p>`}</div>`;
 }
@@ -2216,7 +2217,7 @@ function photoStrip(){
 async function startOver(){
   const cards = cardTotal(S.cards.filter(c => !c.example)), photos = ui.photos || [];
   ui.undo = JSON.stringify(S);
-  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
+  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.goal = ""; S.settings.goalSkipped = false; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
   ui.undoPhotos = photos; ui.undoPhotosFor = ui.undo;
   for(const x of photos) await idb("del", x.id);
   ui.photos = []; ui.photo = null; ui.sel.clear(); ui.copyOpts = null; ui.clearOpen = false; ui.photoInstr = ""; ui.listText = "";
@@ -2326,7 +2327,7 @@ function factsFor(task){
     lines.push(parts.join(". ") + ".");
   }
   for(const x of S.hobbyNotes || []) lines.push(`Seller's note${x.year ? " on " + [x.year, x.set, x.num ? "#" + x.num : ""].filter(Boolean).join(" ") : ""}: ${x.text}`);
-  return lines.join("\n").slice(0, 7800);
+  return ((S.goal ? "The seller's plan for this sale: " + S.goal + "\n" : "") + lines.join("\n")).slice(0, 7800);
 }
 
 /* ---------- the know-how panel: look things up, add notes, learn from a post, check a partial set ---------- */
@@ -2632,6 +2633,30 @@ function pcLine(c){
   return `<div class="val hist"><span class="chip ${diff ? (r.verdict === "raise" ? "ok" : "warn") : "ok"}">${diff ? "check says " + money(v) : "check: ask looks right"}</span> ${esc(r.why || "")}${diff ? ` <button class="small" data-act="pPcUse" data-cid="${c.id}" data-v="${v}">Use ${money(v)}</button>` : ""}</div>${evidenceList(r)}`;
 }
 
+/* ---------- the seller's plan: asked for up front, then kept in mind the whole way ---------- */
+const GOAL_BITS = ["A singles page for the best cards", "$__ per card pages, set where values land", "Lots by year for the rest", "Lots by player where I have several", "Graded slabs on their own page", "Set-starter lots with card counts", "A take-everything price"];
+function goalAdd(bit){ const d = String(ui.goalDraft ?? S.goal ?? "").trim(); ui.goalDraft = d ? d.replace(/[.\s]*$/, "") + ". " + bit + "." : bit + "."; }
+function planShape(){
+  const real = S.cards.filter(c => !c.example), singles = real.filter(c => !c.isLot && c.pin !== "page" && (c.pin === "single" || c.section)).length, pages = new Map();
+  real.filter(c => !c.isLot && c.pin === "page").forEach(c => { const k = money(priceOf(c)) || "no price"; pages.set(k, (pages.get(k) || 0) + 1); });
+  const lots = real.filter(c => c.isLot), byYear = lots.filter(c => yearOf(c)).length, und = toDecide().filter(c => !c.example).length;
+  return [singles ? plural(singles, "single", "singles") : "", pages.size ? "per-card pages: " + [...pages].map(([k, n]) => `${k} (${n})`).join(", ") : "", lots.length ? plural(lots.length, "lot", "lots") + (byYear ? `, ${byYear} by year` : "") : "", und ? und + " still to place" : ""].filter(Boolean).join(" · ");
+}
+function goalLine(){
+  if(!S.goal) return `<div class="goal"><span class="note">No plan for this sale yet.</span> <button class="small" data-act="goalEdit">Say how you want to run it</button></div>`;
+  const shape = planShape();
+  return `<div class="goal"><span><strong>Your plan:</strong> ${esc(S.goal)} <button class="small" data-act="goalEdit">Edit</button></span><span class="note">So far: ${esc(shape || "nothing placed yet")}</span></div>`;
+}
+function goalPanel(){
+  if(!(ui.goalEdit || (!S.goal && !S.settings.goalSkipped))) return "";
+  return `<div class="panel pick" id="goal"><h2>How do you want to run this sale?</h2>
+    <p class="note">Say it in your own words, or tap the pieces below to build it. The tool keeps it in mind the whole way: it sorts your cards toward it, suggests pages and lots, shows how the sale is shaping up, and writes the post to match. Change it any time.</p>
+    <textarea id="goaltext" style="min-height:90px;font-family:var(--body)" placeholder="I plan to do a singles page, some $__ per card pages based on where values land, and then lots by year the rest of the way.">${esc(ui.goalDraft ?? S.goal ?? "")}</textarea>
+    <div class="exs"><span class="note">Add:</span>${GOAL_BITS.map((t, i) => `<button class="chipbtn" data-act="goalBit" data-i="${i}">+ ${esc(t)}</button>`).join("")}</div>
+    <div class="exs"><span class="note">Or start from:</span>${PRESETS.map((t, i) => `<button class="chipbtn" data-act="goalPreset" data-i="${i}">${esc(t.split(".")[0])}</button>`).join("")}</div>
+    <div class="row"><button class="primary" data-act="goalSave">${S.goal ? "Save the plan" : "Start with this plan"}</button>${S.goal ? `<button class="small" data-act="goalCancel">Cancel</button>` : `<button class="small" data-act="goalSkip">Skip for now</button>`}</div></div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2641,7 +2666,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
+  $("#main").innerHTML = goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
   stat();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -2719,6 +2744,13 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "goalEdit"){ ui.goalEdit = true; ui.goalDraft = S.goal || ""; }
+  else if(act === "goalBit"){ goalAdd(GOAL_BITS[+el.dataset.i]); }
+  else if(act === "goalPreset"){ ui.goalDraft = PRESETS[+el.dataset.i]; }
+  else if(act === "goalCancel"){ ui.goalEdit = false; ui.goalDraft = null; }
+  else if(act === "goalSkip"){ S.settings.goalSkipped = true; ui.goalEdit = false; }
+  else if(act === "goalSave"){ const t = String(ui.goalDraft ?? "").trim(); if(!t){ ui.cmdMsg = "Type the plan, or tap a piece to start it."; } else { S.goal = t; ui.planDraft = t; ui.goalEdit = false; ui.goalDraft = null; const n = toDecide().filter(c => !c.example).length; ui.cmdMsg = n >= 2 ? `Plan saved. Tap Sort to my plan above to place your ${n} cards toward it, or keep going card by card.` : "Plan saved. Scan your cards and the tool will sort them toward it."; } }
+  else if(act === "goalApply") return runPlan(S.goal);
   else if(act === "invPick"){ const i = $("#invfile-" + el.dataset.lid); if(i) i.click(); return; }
   else if(act === "invAddKeys"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot){ ui.invMsg = invAddKeys(f.c); ui.invFor = f.c.id; } }
   else if(act === "invUseCount"){ const f = findCard(el.dataset.lid), s = f && invInfo(f.c); if(s){ setLotCount(f.c, s.total, s.unique); ui.invMsg = `The lot now counts ${s.total} cards, ${s.unique} different.`; ui.invFor = f.c.id; } }
@@ -2852,6 +2884,7 @@ document.addEventListener("change", e => {
   if(t.dataset.invlabel){ const f = findCard(t.dataset.invlabel); if(f){ f.c.invLabel = t.value.trim(); save(); } return; }
   if(t.dataset.invnums){ const f = findCard(t.dataset.invnums); if(f && f.c.inv){ const out = []; for(const m of String(t.value).matchAll(/\d+/g)) out.push(+m[0]); f.c.inv.list = out.filter(n => n > 0); f.c.inv.unread = 0; save(); } return render(); }
   if(t.id === "wanttext"){ ui.wantText = t.value; return; }
+  if(t.id === "goaltext"){ ui.goalDraft = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
   if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.lot) relot(f.lot); save(); } return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
@@ -2901,7 +2934,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
