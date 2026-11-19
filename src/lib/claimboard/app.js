@@ -192,7 +192,7 @@ async function scan(files, opts){
       for(const c of (r && r.cards) || []){
         const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
         if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null, dupOf:isVideo ? undefined : (twinOf(c) || {}).id});
+        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null, dupOf:isVideo ? undefined : (twinOf(c) || {}).id, condLog:[{at:Date.now(), src:"scan", grade:c.grade ?? "", notes:c.flaws ?? ""}]});
         added++;
       }
     };
@@ -549,6 +549,7 @@ function whyLines(c){
   }
   out.push(["Identified as", title(c) + (c.conf != null ? `, ${Math.round(c.conf * 100)}% confidence.` : ".") + (c.idWhy ? " " + c.idWhy : "") + (c.needsBack ? " The back should be checked to confirm." : "")]);
   out.push(["Condition", ([c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded.") + (c.flawsAI != null ? (c.flawsOk ? ". Reviewed by you." : ". Suggested by the scan and not yet confirmed by you.") + (c.flawsAI && c.flawsAI !== c.flaws ? " The scan first suggested: " + c.flawsAI + "." : "") : "")]);
+  if((c.condLog || []).length) out.push(["Condition record", condHistory(c).join(" | ")]);
   const pck = S.priceCheck && S.priceCheck.items[c.id];
   if(pck) out.push(["Price check", `${pck.used ? "Suggestion used" : pck.verdict === "ok" ? "Looks right" : pck.verdict === "raise" ? "Could go higher" : "Could go lower"}${Number(pck.suggest) > 0 ? ", suggested " + money(Number(pck.suggest)) : ""}. ${pck.why || ""} ${(pck.evidence || []).slice(0, 3).map(e => [e.source, e.price != null ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")).join("; ")}`.trim()]);
   if(c.photosSeen) out.push(["Extra photos", `${c.photosSeen} photo${c.photosSeen === 1 ? "" : "s"} of this card were checked${c.recheckNote ? ", after you asked: " + c.recheckNote : ""}. ${c.recheckSummary || ""}`.trim()]);
@@ -632,6 +633,7 @@ async function readBack(file, id){
       if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
       const have = flawParts(c).map(x => x.toLowerCase()), add = (Array.isArray(r.backFlaws) ? r.backFlaws : []).map(String).filter(x => x && !have.includes(x.toLowerCase()));
       if(add.length){ c.flaws = joinFlaws([...flawParts(c), ...add]); c.flawsAI = joinFlaws([...flawParts({flaws:c.flawsAI}), ...add]); c.flawsOk = false; }
+      logCond(c, "back photo", r.grade, add);
       c.needsBack = false; c.backSeen = true; c.idOk = (c.conf ?? 0) >= .75;
       c.backMsg = (title(c) !== before ? `The back changed this to ${title(c)}.` : "The back confirms it.") + (add.length ? ` New condition notes from the back: ${add.join(", ")}.` : "") + (c.idOk ? "" : " It is still not certain, so check the details.");
       if(c.example) delete c.example;
@@ -713,6 +715,7 @@ async function recheck(id){
     if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
     const have = flawParts(c).map(x => x.toLowerCase()), add = flawList(r.flaws).filter(x => !have.includes(x.toLowerCase()));
     if(add.length){ c.flaws = joinFlaws([...flawParts(c), ...add]); c.flawsAI = joinFlaws([...flawParts({flaws:c.flawsAI}), ...add]); c.flawsOk = false; }
+    logCond(c, `${n} more photo${n === 1 ? "" : "s"}${q.note ? " (" + q.note + ")" : ""}`, r.grade, [...add, r.summary ? String(r.summary) : ""]);
     if(r.sawBack){ c.backSeen = true; c.needsBack = false; }
     c.idOk = (c.conf ?? 0) >= .75;
     c.photosSeen = (c.photosSeen || 0) + n; c.recheckNote = q.note || ""; c.recheckSummary = String(r.summary || "");
@@ -1841,7 +1844,7 @@ function addFoundCards(){
     const same = sib.find(x => String(x.name || "").toLowerCase() === String(pc.name || "").toLowerCase() && !ph.cards.some(y => y !== pc && y.invId === x.invId));
     if(same){ pc.invId = same.invId; continue; }
     const f = pc.f || {}, fl = joinFlaws(flawList(f.flaws)), id = uid();
-    S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null});
+    S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null, condLog:[{at:Date.now(), src:"sale photo", grade:f.grade ?? "", notes:fl}]});
     pc.invId = id;
   }
   const made = ph.groups.filter(g => !g.lotId && mirrorGroup(g)).length;
@@ -1899,7 +1902,7 @@ function checkItems(only){
     const h = c.isLot ? null : historyFor(c);
     return {id:c.id, kind:c.isLot ? "lot" : c.pin === "page" ? "price page card" : "single", card:c.isLot ? c.player : lineName(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c),
       value:c.aiLow != null && c.aiHigh != null ? [c.aiLow, c.aiHigh] : null, soldComp:c.comp ?? null,
-      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined, count:c.isLot ? lotN(c) : undefined, different:c.isLot && c.unique ? c.unique : undefined,
+      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined, count:c.isLot ? lotN(c) : undefined, different:c.isLot && c.unique ? c.unique : undefined, askSet:askSource(c), conditionHistory:c.isLot ? undefined : condHistory(c).slice(-6), recheck:c.recheckSummary || undefined, valueWhy:c.isLot ? undefined : c.valueWhy || undefined,
       mySales:h && h.mine.length ? h.mine.slice(0, 3).map(x => ({price:x.price, grade:x.grade, date:new Date(x.date).toISOString().slice(0, 10)})) : undefined,
       subPrices:h && h.sub.length ? h.sub.slice(0, 3).map(x => ({price:x.price, sold:x.sold, grade:x.grade})) : undefined};
   });
@@ -1929,24 +1932,46 @@ const evidenceList = r => (r.evidence || []).length ? `<div class="meta">Evidenc
 function priceCheckPanel(){
   const pc = S.priceCheck, busy = ui.busy ? "disabled" : "";
   if(!pc) return `<div class="panel" id="pricecheck" data-jump="Price check"><div class="row" style="justify-content:space-between"><h2>Double-check prices</h2><button class="primary" data-act="pcRun" ${busy}>Double-check prices</button></div>
-    <p class="note">Compares every ask with recent sold prices on the web, your own past sales and the sub prices you collected, then suggests where to raise or lower. Nothing changes until you tap Use.</p>${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}</div>`;
+    <p class="note">Compares every ask with recent sold prices for cards in the same condition, your own past sales and the sub prices you collected, and respects why each ask was set. Nothing changes until you choose.</p>${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}</div>`;
   const rows = S.cards.filter(c => inSale(c) && pc.items[c.id]).map(c => [c, pc.items[c.id]]);
   const flagged = rows.filter(([c, r]) => r.verdict !== "ok" && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(c));
+  const off = ui.pcOff || new Set(), sel = flagged.filter(([c]) => !off.has(c.id)), half = (c, r) => roundP((priceOf(c) + Number(r.suggest)) / 2);
   return `<div class="panel pick" id="pricecheck" data-jump="Price check"><div class="row" style="justify-content:space-between"><h2>Price check <span class="note">${esc(dshort(pc.at))}</span></h2>
       <span class="row" style="gap:6px"><button class="small" data-act="pcRun" ${busy}>Run again</button><button class="small" data-act="pcClear">Dismiss</button></span></div>
     ${pc.summary ? `<p>${esc(pc.summary)}</p>` : ""}
-    <p class="note">${flagged.length ? plural(flagged.length, "ask looks", "asks look") + " off." : "Every ask looks right."} ${rows.length - flagged.length ? plural(rows.length - flagged.length, "item checks", "items check") + " out." : ""} Each card's Why panel keeps its result and evidence.</p>
-    ${flagged.length ? `<ul class="cards">${flagged.map(([c, r]) => `<li data-id="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ${r.verdict === "raise" ? "ok" : "warn"}">${r.verdict === "raise" ? "raise" : "lower"}</span></div>
-        <div class="meta">Ask ${money(priceOf(c))} → suggested <strong>${money(Number(r.suggest))}</strong>. ${esc(r.why || "")}</div>${evidenceList(r)}</div>
-        <div class="nums"><button class="small primary" data-act="pcUse" data-v="${Number(r.suggest)}">Use ${money(Number(r.suggest))}</button><button class="small" data-act="pcKeep">Keep ${money(priceOf(c))}</button></div></li>`).join("")}</ul>
-      ${flagged.length > 1 ? `<div class="row"><button class="primary" data-act="pcAll">Use all ${flagged.length} suggestions</button></div>` : ""}` : ""}
+    <p class="note">${flagged.length ? plural(flagged.length, "ask looks", "asks look") + " off." : "Every ask looks right."} ${rows.length - flagged.length ? plural(rows.length - flagged.length, "item checks", "items check") + " out." : ""} For each one: take the suggestion, meet halfway, type your own, or keep yours.</p>
+    ${flagged.length ? `<div class="bar pcbar"><strong>${sel.length} of ${flagged.length} ticked</strong>
+        <button class="small" data-act="pcSelAll">Tick all</button><button class="small" data-act="pcSelNone">Untick all</button>
+        <button class="small primary" data-act="pcUseSel" ${sel.length ? "" : "disabled"}>Use the suggestions</button><button class="small" data-act="pcHalfSel" ${sel.length ? "" : "disabled"}>Meet halfway</button><button class="small" data-act="pcKeepSel" ${sel.length ? "" : "disabled"}>Keep mine</button>
+        <span class="row" style="gap:6px"><button class="small" data-act="pcTick" data-k="raise">Tick raises</button><button class="small" data-act="pcTick" data-k="lower">Tick lowers</button></span></div>
+      <ul class="cards">${flagged.map(([c, r]) => { const v = Number(r.suggest), h = half(c, r), page = c.pin === "page";
+        return `<li data-id="${c.id}"><div class="pickrow"><input type="checkbox" data-pcsel="${c.id}" ${off.has(c.id) ? "" : "checked"} aria-label="Tick ${esc(title(c))}"><div>
+          <div class="ttl">${esc(title(c))} <span class="chip ${r.verdict === "raise" ? "ok" : "warn"}">${r.verdict === "raise" ? "raise" : "lower"}</span></div>
+          <div class="meta">${esc([c.grade, c.isLot ? "" : condShort(c)].filter(Boolean).join(" · ") || "No condition recorded")}${page ? ` · on the ${esc(c.section || "price")} page` : ""}</div>
+          <div class="meta">Ask ${money(priceOf(c))} → suggested <strong>${money(v)}</strong>. ${esc(r.why || "")}</div>${evidenceList(r)}</div></div>
+          <div class="nums"><label>Your ask<input class="money" data-sask="${c.id}" inputmode="decimal" placeholder="${priceOf(c)}"></label>
+            <button class="small primary" data-act="pcUse" data-v="${v}">${page && r.verdict === "raise" ? `Make it a single at ${money(v)}` : `Use ${money(v)}`}</button>${h !== v && h !== priceOf(c) ? `<button class="small" data-act="pcUse" data-v="${h}">Halfway ${money(h)}</button>` : ""}<button class="small" data-act="pcKeep">Keep ${money(priceOf(c))}</button></div></li>`; }).join("")}</ul>` : ""}
     ${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}
   </div>`;
 }
 function useSuggestion(c, v){
   if(!(v > 0)) return;
+  if(c.pin === "page" && v > priceOf(c)){ c.pin = "single"; c.manual = true; c.section = "Singles"; delete c.prevPrice; ensureSection("Singles"); }
   c.price = v; if(c.isLot) c.fixed = true;
   const r = S.priceCheck && S.priceCheck.items[c.id]; if(r){ r.verdict = "ok"; r.used = true; }
+}
+/* the condition record: every look at a card adds to it, nothing is overwritten */
+function logCond(c, src, grade, notes){
+  if(!c || c.isLot) return;
+  const n = Array.isArray(notes) ? notes.filter(Boolean).join("; ") : String(notes || "");
+  c.condLog = [...(c.condLog || []), {at:Date.now(), src, grade:grade ? String(grade) : "", notes:n}].slice(-30);
+}
+const condHistory = c => (c.condLog || []).map(e => `${dshort(e.at)}, ${e.src}: ${[e.grade, e.notes].filter(Boolean).join("; ") || "no change"}`);
+function askSource(c){
+  if(c.isLot) return c.fixed ? "set by the seller for the whole lot" : "worked out from the listed cards";
+  if(c.pin === "page") return `on a ${money(priceOf(c))} per card price page, priced with the other cards there`;
+  if(c.price != null) return "typed by the seller, who has the card in hand";
+  return c.comp != null ? "the seller's sold comp less the discount" : "the scan's value range for this condition, less the discount";
 }
 
 /* ---------- title and description, written on demand from the sale as it stands ---------- */
@@ -2951,6 +2976,15 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "pcSelAll"){ ui.pcOff = new Set(); }
+  else if(act === "pcSelNone"){ ui.pcOff = new Set(S.cards.map(x => x.id)); }
+  else if(act === "pcTick"){ const k = el.dataset.k; ui.pcOff = new Set(S.cards.filter(x => { const r = S.priceCheck && S.priceCheck.items[x.id]; return !r || r.verdict !== k; }).map(x => x.id)); }
+  else if(act === "pcUseSel" || act === "pcHalfSel" || act === "pcKeepSel"){
+    ui.undo = JSON.stringify(S); let n = 0; const off = ui.pcOff || new Set();
+    for(const x of S.cards){ const r = S.priceCheck && S.priceCheck.items[x.id]; if(!r || off.has(x.id) || r.verdict === "ok" || !(Number(r.suggest) > 0) || !inSale(x)) continue;
+      if(act === "pcKeepSel"){ r.verdict = "ok"; r.kept = true; } else useSuggestion(x, act === "pcUseSel" ? Number(r.suggest) : roundP((priceOf(x) + Number(r.suggest)) / 2)); n++; }
+    ui.cmdMsg = act === "pcKeepSel" ? `Kept your ${plural(n, "ask", "asks")}.` : `Updated ${plural(n, "ask", "asks")}${act === "pcHalfSel" ? ", halfway to the suggestions" : ""}. Undo is in the bar at the top.`;
+  }
   else if(act === "dupGo"){ go("#inventory", () => { const t = document.querySelector('[data-jump="Duplicates"]'); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
   else if(act === "findDups"){ const n = findDuplicates(); ui.cmdMsg = n ? `Found ${plural(n, "possible duplicate", "possible duplicates")}. They are listed on Review under Possible duplicates.` : "No duplicates found."; ui.dupMsg = ui.cmdMsg; }
   else if(act === "dupDel"){ ui.undo = JSON.stringify(S); const keep = el.dataset.keep && findCard(el.dataset.keep); take(el.dataset.cid); if(keep) delete keep.c.dupOf; allCards().forEach(x => { if(x.c.dupOf === el.dataset.cid) delete x.c.dupOf; }); ui.cmdMsg = "Removed. Undo is in the bar at the top."; }
@@ -3049,8 +3083,8 @@ document.addEventListener("click", async e => {
   }
   else if(act === "ptagUndo" && ui.photo){ const t = ui.photo.tags.pop(); if(t && ui.photo.qi > 0 && photoQueue()[ui.photo.qi - 1] === t.text) ui.photo.qi--; ui.photo.out = null; return render(); }
   else if(act === "ptagClear" && ui.photo){ ui.photo.tags = []; ui.photo.qi = 0; ui.photo.out = null; return render(); }
-  else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = joinFlaws(p); c.flawsOk = true; }
-  else if(act === "flawBack" && c){ c.flaws = joinFlaws([...flawParts(c), el.dataset.v]); c.flawsOk = true; }
+  else if(act === "flawDrop" && c){ const p = flawParts(c), gone = p.splice(+el.dataset.i, 1); c.flaws = joinFlaws(p); c.flawsOk = true; logCond(c, "you", "", "removed: " + gone.join("")); }
+  else if(act === "flawBack" && c){ c.flaws = joinFlaws([...flawParts(c), el.dataset.v]); c.flawsOk = true; logCond(c, "you", "", "restored: " + el.dataset.v); }
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
   else if(act === "undo"){ if(ui.undoPhotos && ui.undoPhotosFor === ui.undo){ ui.photos = ui.undoPhotos; ui.photos.forEach(x => idb("put", photoRecord(x))); } ui.undoPhotos = null; S = merge(JSON.parse(ui.undo)); (S.sales || []).forEach(saleSaved); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
@@ -3113,9 +3147,10 @@ document.addEventListener("change", e => {
   if(t.id === "goaltext"){ ui.goalDraft = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
   if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.c.isLot) f.c.fixed = v > 0; if(f.lot) relot(f.lot); save(); } return render(); }
-  if(t.dataset.ef){ const f = findCard(t.dataset.eid); if(f){ const k = t.dataset.ef, v = t.value.trim(); f.c[k] = k === "price" ? (numOrNull(v) > 0 ? numOrNull(v) : null) : k === "year" && /^\d{4}$/.test(v) ? +v : v; if(k === "flaws"){ f.c.flawsOk = true; } delete f.c.example; if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); } save(); } return render(); }
+  if(t.dataset.ef){ const f = findCard(t.dataset.eid); if(f){ const k = t.dataset.ef, v = t.value.trim(); f.c[k] = k === "price" ? (numOrNull(v) > 0 ? numOrNull(v) : null) : k === "year" && /^\d{4}$/.test(v) ? +v : v; if(k === "flaws"){ f.c.flawsOk = true; logCond(f.c, "you", "", "notes now: " + v); } if(k === "grade") logCond(f.c, "you", v, ""); delete f.c.example; if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); } save(); } return render(); }
   if(t.dataset.mv){ const to = t.value; if(to){ ui.cmdMsg = moveCard(t.dataset.mv, to); ui.dopen.allcards = true; save(); } return render(); }
   if(t.id === "acq"){ ui.acQ = t.value; ui.dopen.allcards = true; return render(); }
+  if(t.dataset.pcsel){ ui.pcOff = ui.pcOff || new Set(); if(t.checked) ui.pcOff.delete(t.dataset.pcsel); else ui.pcOff.add(t.dataset.pcsel); return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
@@ -3148,7 +3183,7 @@ document.addEventListener("change", e => {
   const li = t.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id), f = t.dataset.f;
   if(!c || !f) return;
   if(["comp","price","soldPrice"].includes(f)) c[f] = numOrNull(t.value);
-  else if(f === "flawAdd"){ if(t.value.trim()){ c.flaws = joinFlaws([...flawParts(c), t.value.trim()]); c.flawsOk = true; } }
+  else if(f === "flawAdd"){ if(t.value.trim()){ c.flaws = joinFlaws([...flawParts(c), t.value.trim()]); c.flawsOk = true; logCond(c, "you", "", "added: " + t.value.trim()); } }
   else if(f === "claimBy"){ c.claimBy = t.value.replace(/^u\//, "").trim(); if(c.claimBy && c.status === "open"){ c.status = "claimed"; c.claimAt = Date.now(); } }
   else if(f === "status"){
     const was = c.status; c.status = t.value;

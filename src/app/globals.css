@@ -156,3 +156,4 @@ p, .note, .meta, label, .chipbtn, .ttl{overflow-wrap:break-word}
 .jumpbar .js button{background:transparent;border:1px solid var(--line);font-weight:500}
 [data-jump]{scroll-margin-top:110px}
 .chipbtn.on{background:var(--ink);color:var(--bg)}
+.pcbar{position:static}

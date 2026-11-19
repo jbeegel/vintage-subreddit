@@ -224,6 +224,8 @@ How this subreddit prices: asks are firm, buyers claim at the asking price, and 
 For each item:
 ${web ? "- Search the web for recent sold prices of this exact card in comparable condition: eBay sold listings, 130point, SportsCardsPro, and PSA auction prices for graded cards. Prefer sales from the last six months. Use as few searches as you need; a lot of commons or a cheap card does not need one." : "- Use your general knowledge of recent sold prices. You cannot search the web here, so say \"general knowledge\" as the source."}
 - Weigh the seller's own past sales and the collected subreddit prices above other prices when they exist, because they show what actually sells here.
+- Judge every comp against this card's own condition: its grade, condition notes and condition history. A sold price for a clean copy does not apply to a creased, trimmed or worn one. Say which condition your evidence is for.
+- Respect why the ask is what it is: "askSet" says where it came from. When the seller typed it, or it is low because of condition, only suggest a change when sales for this condition clearly disagree, and say so plainly. For a card on a per-card price page, "raise" means it is worth taking off the page; suggest the single ask it would get.
 - "verdict": "ok" if the ask is within about 15% of where it should be, "raise" if it is clearly too low, "lower" if it is clearly too high to sell.
 - "suggest": the ask you recommend, rounded the way sellers do: $1 steps under $25, $5 steps above.
 - "why": one plain sentence.
