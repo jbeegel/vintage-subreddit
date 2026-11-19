@@ -90,6 +90,7 @@ The tool is currently recommending this next step to the seller: "${nextStep}". 
 Operations:
 - {"op":"skipStep"}  the seller does not want the step the tool is recommending right now; the tool moves on to the next one.
 - {"op":"lot","name":"Ted Williams lot","ids":[...],"price":150,"section":"Lots"}  group cards into one lot. "price" is the price for the whole group; leave it out to price the lot from its cards. "section" is optional.
+- {"op":"count","ids":["lotId"],"count":260,"different":240}  how many cards a lot holds in all and how many are different, when it holds more than are listed. A "lot" may carry "count" and "different" too.
 - {"op":"single","ids":[...]}  sell these as singles (pulls them out of any lot).
 - {"op":"page","ids":[...],"perCard":10}  put these on a per-card price page.
 - {"op":"price","ids":[...],"price":25}  set the ask on each of these (a lot id sets the lot's price).
@@ -198,6 +199,7 @@ Operations:
 - {"op":"group","ids":["p12","p13"],"price":160,"label":"1959 Fleer Ted Williams lot","tag":"All 6 for $160"}  make these cards one lot with one tag. Leave out "price" to price it from the cards. "label" is optional.
 - Every "group" may carry "tag": the exact words the seller wants on the lot's tag, for example "All 6 for $160", "$35 total" or "$50 shipped". Use it whenever the seller words the price.
 - {"op":"tag","ids":["g0"],"text":"$50 shipped"}  change the words on existing tags. An empty text goes back to the plain ask.
+- {"op":"count","ids":["g0"],"count":260,"different":240}  how many cards a lot holds in all and how many are different, when it holds more than the photo shows. A "group" may carry "count" and "different" too.
 - {"op":"ungroup","ids":["g0"]}  split lots back into single tags.
 - {"op":"price","ids":["p3"],"price":25}  set the ask for cards or lots.
 - {"op":"adjust","ids":["p3","g0"],"pct":-10}  raise or lower asks by a percentage. For "everything", list every id.
@@ -214,7 +216,7 @@ export function priceCheckPrompt(items: unknown, discount: number, web: boolean)
 Items. Each has an id, what it is, its condition, the current ask in USD, the value range from the scan, any sold comp the seller entered, the seller's own past sales of the same card, and sale prices the seller collected from the subreddit:
 ${JSON.stringify(items)}
 
-How this subreddit prices: asks are firm, buyers claim at the asking price, and there are no platform fees, so asks usually sit about ${discount}% under recent eBay sold prices for the same card in the same condition. Lots usually go a little under the total of their cards.
+How this subreddit prices: asks are firm, buyers claim at the asking price, and there are no platform fees, so asks usually sit about ${discount}% under recent eBay sold prices for the same card in the same condition. Lots usually go a little under the total of their cards. A lot's "count" is how many cards it holds and "different" how many are unique; "cards" may list only some of them. Price a lot on its full count: unique cards drive a year lot's value, duplicates add little, and the listed key cards matter most.
 
 For each item:
 ${web ? "- Search the web for recent sold prices of this exact card in comparable condition: eBay sold listings, 130point, SportsCardsPro, and PSA auction prices for graded cards. Prefer sales from the last six months. Use as few searches as you need; a lot of commons or a cheap card does not need one." : "- Use your general knowledge of recent sold prices. You cannot search the web here, so say \"general knowledge\" as the source."}

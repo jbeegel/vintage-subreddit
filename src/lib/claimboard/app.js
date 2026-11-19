@@ -524,6 +524,7 @@ function whyLines(c){
     const sum = c.members.reduce((a, m) => a + (priceOf(m) || 0), 0), b = Number(S.settings.lotDiscount ?? 10);
     out.push(["In this lot", c.members.map(m => title(m) + (priceOf(m) != null ? " " + money(priceOf(m)) : " (no price)")).join("; ")]);
     out.push(["Lot price", c.members.some(m => priceOf(m) == null) ? "Not set, because at least one card inside has no price." : `The cards' asks add up to ${money(sum)}. Less the ${b}% bundle discount and rounded, that is ${money(roundP(sum * (1 - b / 100)))}.` + (p !== roundP(sum * (1 - b / 100)) ? ` You changed it to ${money(p)}.` : "")]);
+    if(lotN(c) > c.members.length) out.push(["Card count", `${lotN(c)} cards in all${c.unique ? ", " + c.unique + " different" : ""}; ${c.members.length} listed. ${Number(c.extraEach) > 0 ? `The unlisted ones count ${money(Number(c.extraEach))} each in the lot price.` : "The unlisted ones are not in the worked-out price."}`]);
     const lh = lotHobbyText(c); if(lh) out.push(["Hobby notes", lh.replace(/^./, ch => ch.toUpperCase()) + "."]);
     out.push(["Why a lot", c.why || (c.manual ? "You grouped these by hand." : "Grouped by the sale plan.")]);
     return out;
@@ -782,9 +783,10 @@ function findCard(id){
   return null;
 }
 function relot(lot){
-  const sum = lot.members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = lot.members.some(c => priceOf(c) == null);
-  if(!lot.fixed) lot.price = sum && !unpriced ? roundP(sum * (1 - Number(S.settings.lotDiscount ?? 10) / 100)) : null;
-  lot.player = lot.player.replace(/\(\d+ cards\)$/, "(" + lot.members.length + " cards)");
+  const sum = lot.members.reduce((a, c) => a + (priceOf(c) || 0), 0) + Math.max(0, lotN(lot) - lot.members.length) * (Number(lot.extraEach) || 0), unpriced = lot.members.some(c => priceOf(c) == null);
+  const blind = lotN(lot) > lot.members.length && !(Number(lot.extraEach) > 0); /* unlisted cards with no value: no worked-out price, so a 240-card lot never shows the price of its 3 pictured cards */
+  if(!lot.fixed) lot.price = sum && !unpriced && !blind ? roundP(sum * (1 - Number(S.settings.lotDiscount ?? 10) / 100)) : null;
+  lot.player = lot.player.replace(/\(\d+ cards\)$/, "(" + lotN(lot) + " cards)");
 }
 function setAside(id, choice){
   const f = findCard(id); if(!f) return;
@@ -880,7 +882,7 @@ function closeSale(){
   const waiting = shipOrders().filter(x => !x.o.shippedAt).length;
   if(waiting) return `${waiting} paid order${waiting === 1 ? " has" : "s have"} not been marked shipped. Finish those on the Ship tab first, so they are not lost.`;
   const kind = c => c.isLot ? "lot" : c.pin === "page" ? "page" : "single";
-  const items = rows.map(c => ({t:title(c), year:c.year, set:c.set, num:c.num, player:c.player, g:c.grade || "", f:c.flaws || "", kind:kind(c), n:c.isLot ? c.members.length : 1, section:c.section || "", ask:priceOf(c), sold:c.status === "sold" ? c.soldPrice ?? null : null, soldAt:c.soldAt || null}));
+  const items = rows.map(c => ({t:title(c), year:c.year, set:c.set, num:c.num, player:c.player, g:c.grade || "", f:c.flaws || "", kind:kind(c), n:lotN(c), section:c.section || "", ask:priceOf(c), sold:c.status === "sold" ? c.soldPrice ?? null : null, soldAt:c.soldAt || null}));
   const sale = {id:uid(), date:Date.now(), name:(S.settings.title || "").trim() || "Sale of " + new Date().toLocaleDateString([], {month:"long", day:"numeric"}), plan:S.plan ? S.plan.text : "", items};
   S.sales = [sale, ...(S.sales || [])];
   S.cards = S.cards.filter(c => c.status !== "sold" && !c.example);
@@ -1189,6 +1191,7 @@ function applyOps(ops){
       cards.forEach(c => { c.pin = "lot"; c.section = sec; });
       const lot = {id:uid(), status:"open", isLot:true, manual:true, members:cards, section:sec, year:"", set:"", num:"", player:String(o.name || "Lot") + " (" + cards.length + " cards)", grade:"", flaws:"", why:"You asked for this group.", conf:1, comp:null, price:null};
       describeLot(lot);
+      if(Number(o.count) > 0){ lot.count = Math.round(Number(o.count)); lot.countSet = true; if(Number(o.different) > 0) lot.unique = Math.round(Number(o.different)); }
       if(Number(o.price) > 0){ lot.price = Number(o.price); lot.fixed = true; } else relot(lot);
       S.cards.push(lot); ensureSection(sec); n++;
     } else if(o.op === "single"){
@@ -1234,6 +1237,8 @@ function applyOps(ops){
         }
         n++;
       });
+    } else if(o.op === "count"){
+      ids.forEach(id => { const f = findCard(id); if(f && f.c.isLot){ setLotCount(f.c, o.count, o.different); n++; } });
     } else if(o.op === "skipStep"){
       skipNext(); n++;
     } else if(o.op === "settings" && o.fields){
@@ -1252,7 +1257,7 @@ async function runCmd(){
   if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
   ui.busy = ui.cmdMsg = "Working on it"; render();
   try{
-    const rows = S.cards.map(c => ({id:c.id, card:title(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c), section:c.section || "", status:c.status, buyer:c.claimBy || "", inside:c.isLot ? c.members.map(m => ({id:m.id, card:title(m), grade:m.grade || "", ask:priceOf(m)})) : undefined}));
+    const rows = S.cards.map(c => ({id:c.id, card:title(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c), section:c.section || "", status:c.status, buyer:c.claimBy || "", count:c.isLot ? lotN(c) : undefined, inside:c.isLot ? c.members.map(m => ({id:m.id, card:title(m), grade:m.grade || "", ask:priceOf(m)})) : undefined}));
     const st = S.settings, settings = {discount:st.discount, lotDiscount:st.lotDiscount ?? 10, singleMin:st.singleMin ?? 20, shipFee:st.shipFee, pay:st.pay, ship:st.ship, title:st.title, intro:st.intro, sections:(S.plan && S.plan.sections) || []};
     const r = (await ai("edit", {text, rows, settings, next:ui.nextText || ""})) || {};
     const before = JSON.stringify(S), n = applyOps(r.ops);
@@ -1477,6 +1482,7 @@ function rowSale(c){
     ${resultBox(c)}
     ${rqBox(c)}
     ${whyBox(c)}
+    ${c.isLot && c.status === "open" ? countBox(c) : ""}
     ${c.isLot && c.status === "open" ? `<label class="inline"><input type="checkbox" data-split="${c.id}" ${c.splitOk ? "checked" : ""}> Cards in this lot can also be bought one at a time</label>` : ""}
     ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
   </li>`;
@@ -1484,7 +1490,7 @@ function rowSale(c){
 function vSale(){
   const items = ordered().filter(inSale), secs = [...new Set(items.map(c => c.section || "Other cards"))];
   const live = items.filter(c => c.status !== "sold"), total = live.reduce((a, c) => a + (priceOf(c) || 0), 0);
-  const cards = items.reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
+  const cards = cardTotal(items), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
   return `<section class="view"><div class="panel"><h2>Your sale so far</h2>
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
@@ -1503,7 +1509,7 @@ function progressBar(){
   const toShip = shipOrders().filter(x => !x.o.shippedAt).length, total = items.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
   const reviewed = real.length > 0 && !checks && !decide;
   const steps = [
-    {k:"Scan", d:real.length > 0, t:real.length ? plural(real.reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), "card", "cards") : "not started", h:"#inventory"},
+    {k:"Scan", d:real.length > 0, t:real.length ? plural(cardTotal(real), "card", "cards") : "not started", h:"#inventory"},
     {k:"Review", d:reviewed, t:checks || decide ? [checks ? checks + " to check" : "", decide ? decide + " to decide" : ""].filter(Boolean).join(", ") : real.length ? "done" : "", h:"#inventory"},
     {k:"Sale", d:reviewed && items.length > 0, t:items.length ? plural(items.length, "item", "items") + " · " + (money(total) || "$0") : "empty", h:"#sale"},
     {k:"Post", d:!!S.postedAt, t:S.postedAt ? "posted" : "not yet", h:"#post"},
@@ -1517,6 +1523,7 @@ function progressBar(){
     ["checks", checks, checks, `${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}],
     ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
     ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
+    ["count", S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, "lot needs", "lots need")} a card count. Unique cards drive a year lot's price.`, {href:"#sale", label:"Add counts"}],
     ["pricecheck", !S.postedAt && unchecked, unchecked, `Double-check ${unchecked === items.filter(c => c.status === "open").length ? "the asks" : plural(unchecked, "ask", "asks")} against recent sales before you post.`, {act:"pcGo", label:"Double-check prices"}],
     ["photos", !S.postedAt && items.length && !labeled, items.length, "Put the asks on your sale photos so buyers see every price.", {href:"#photos", label:"Label photos"}],
     ["post", !S.postedAt, 0, "Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}],
@@ -1619,7 +1626,7 @@ function relabel(){
   for(const g of ph.groups){
     const ms = g.ids.map(pcard).filter(Boolean), bs = ms.map(c => c.box); if(!bs.length) continue;
     const box = {x0:Math.min(...bs.map(b => b.x0)), y0:Math.min(...bs.map(b => b.y0)), x1:Math.max(...bs.map(b => b.x1)), y1:Math.max(...bs.map(b => b.y1))};
-    const lot = groupLot(g), a = groupAsk(g), say = g.text || (lot && lot.tagText) || "All " + g.ids.length + " for " + (a != null ? money(a) : "ask?");
+    const lot = groupLot(g), a = groupAsk(g), say = g.text || (lot && lot.tagText) || "All " + groupN(g) + " for " + (a != null ? money(a) : "ask?");
     /* a lot whose cards are spread around the photo gets a lettered tag on each card instead of one tag nowhere near them */
     if(ar(box) > bs.reduce((s, b) => s + ar(b), 0) * 2.5){ g.letter = "Lot " + String.fromCharCode(65 + letter++); ms.forEach(pc => items.push({ref:"g:" + g.id, box:pc.box, text:g.letter + " " + (g.text || (lot && lot.tagText) || (a != null ? money(a) : "ask?"))})); continue; }
     g.letter = "";
@@ -1639,6 +1646,7 @@ function mirrorGroup(g){
   const name = g.label || lotNameFor(inv.map(i => findCard(i).c));
   if(!applyOps([{op:"lot", name, ids:inv, price:g.price > 0 ? g.price : undefined, section:"Lots"}])) return false;
   const lot = S.cards[S.cards.length - 1]; lot.why = "You made this lot on a sale photo."; g.lotId = lot.id; if(g.text) lot.tagText = g.text;
+  if(g.count || g.unique) setLotCount(lot, g.count, g.unique);
   return true;
 }
 function photoGroup(ids, price, label, text){
@@ -1710,7 +1718,8 @@ async function photoInstr(){
     const r = (await ai("phototag", {text, cards, groups})) || {}, said = [];
     for(const o of Array.isArray(r.ops) ? r.ops : []){
       const ids = Array.isArray(o.ids) ? o.ids.map(String) : [];
-      if(o.op === "group") said.push(photoGroup(ids, Number(o.price), o.label ? String(o.label) : "", o.tag ? String(o.tag) : ""));
+      if(o.op === "group"){ said.push(photoGroup(ids, Number(o.price), o.label ? String(o.label) : "", o.tag ? String(o.tag) : "")); if(Number(o.count) > 0){ const g = ph.groups[ph.groups.length - 1]; if(g){ setGroupCount(g, o.count, o.different); relabel(); } } }
+      else if(o.op === "count"){ ids.forEach(id => { const g = ph.groups.find(x => x.id === id || "g:" + x.id === id); if(g) setGroupCount(g, o.count, o.different); }); said.push(`Lot count set to ${Number(o.count) || "?"} cards${Number(o.different) > 0 ? ", " + Number(o.different) + " different" : ""}.`); }
       else if(o.op === "tag") said.push(photoText(ids.map(id => ph.groups.some(g => g.id === id) ? "g:" + id : id), String(o.text || "")));
       else if(o.op === "ungroup") said.push(photoUngroup(ids));
       else if(o.op === "price") said.push(photoPrice(ids, Number(o.price)));
@@ -1813,7 +1822,7 @@ function condShort(c){
   return [g, ...pick].filter(Boolean).join(", ");
 }
 const lineName = c => [c.year, c.set, c.num ? "#" + c.num : "", c.player, c.variation ? "(" + c.variation + ")" : ""].filter(Boolean).join(" ");
-const lotTagText = (c, a) => c.tagText || "All " + c.members.length + " for " + (a != null ? money(a) : "a price to come");
+const lotTagText = (c, a) => c.tagText || "All " + lotN(c) + " for " + (a != null ? money(a) : "a price to come");
 function priceComment(){
   if(S.settings.commentStyle === "lines") return priceCommentLines();
   const st = S.settings, items = ordered().filter(inSale);
@@ -1822,8 +1831,9 @@ function priceComment(){
     const a = priceOf(c);
     if(!c.isLot) return "- " + strike(`${lineName(c)}${hobbyShort(c) ? " (" + hobbyShort(c) + ")" : ""}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n";
     const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
-    let t = "\n" + strike(`**${name}, ${n} cards - ${lotTagText(c, a)}**`, c) + "\n\n";
+    let t = "\n" + strike(`**${name}, ${lotN(c)} cards${c.unique ? " (" + c.unique + " different)" : ""} - ${lotTagText(c, a)}**`, c) + "\n\n";
     for(const m of c.members) t += `- ${lineName(m)}${hobbyShort(m) ? " (" + hobbyShort(m) + ")" : ""}${condShort(m) ? " - " + condShort(m) : ""}\n`;
+    if(lotN(c) > n) t += `- plus ${lotN(c) - n} more cards not listed\n`;
     const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
     t += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
       ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
@@ -1833,25 +1843,7 @@ function priceComment(){
     return t;
   };
   let out = "";
-  const pics = S.settings.commentByPhoto ? photosWithCards() : [];
-  if(pics.length){
-    const done = new Set(), secs = new Map();
-    pics.forEach((x, i) => {
-      const cs = [...(x.cards || [])].filter(pc => pc.invId && !(x.hidden || []).includes(pc.id)).sort((a, b) => ((a.box.y0 + a.box.y1) - (b.box.y0 + b.box.y1)) || (a.box.x0 - b.box.x0));
-      const rows = []; let cur = null;
-      for(const pc of cs){ const yc = (pc.box.y0 + pc.box.y1) / 2, h = pc.box.y1 - pc.box.y0; if(!cur || yc - cur.yc > h * .5){ cur = {yc, list:[]}; rows.push(cur); } cur.list.push(pc); }
-      const seq = [];
-      rows.forEach(r => r.list.sort((a, b) => a.box.x0 - b.box.x0).forEach(pc => { const f = findCard(pc.invId); const top = f && (f.lot || f.c); if(top && inSale(top) && !done.has(top.id)){ done.add(top.id); seq.push(top); } }));
-      const key = x.page ? "pg:" + x.page.id : x.id;
-      if(!secs.has(key)) secs.set(key, {name:x.page ? x.page.name : "Photo " + (ui.photos.indexOf(x) + 1), seq:[]});
-      secs.get(key).seq.push(...seq);
-    });
-    for(const v of secs.values()) if(v.seq.length) out += `**${v.name}**\n\n` + v.seq.map(block).join("") + "\n";
-    const rest = items.filter(c => !done.has(c.id));
-    if(rest.length) out += "**Other cards**\n\n" + rest.map(block).join("") + "\n";
-  } else {
-    for(const s of [...new Set(items.map(c => c.section || "Other cards"))]) out += `**${s}**\n\n` + items.filter(c => (c.section || "Other cards") === s).map(block).join("") + "\n";
-  }
+  for(const sec of commentSections(items)) out += `**${sec.name}**\n\n` + byYear(sec.items).map(([k, list]) => (k ? `*${k}*\n\n` : "") + list.map(block).join("")).join("\n") + "\n";
   out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted on every line and already priced in. Ask for more photos of anything before you claim.\n`;
   return out.replace(/\n{3,}/g, "\n\n");
 }
@@ -1873,7 +1865,7 @@ function checkItems(only){
     const h = c.isLot ? null : historyFor(c);
     return {id:c.id, kind:c.isLot ? "lot" : c.pin === "page" ? "price page card" : "single", card:c.isLot ? c.player : lineName(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c),
       value:c.aiLow != null && c.aiHigh != null ? [c.aiLow, c.aiHigh] : null, soldComp:c.comp ?? null,
-      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined,
+      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined, count:c.isLot ? lotN(c) : undefined, different:c.isLot && c.unique ? c.unique : undefined,
       mySales:h && h.mine.length ? h.mine.slice(0, 3).map(x => ({price:x.price, grade:x.grade, date:new Date(x.date).toISOString().slice(0, 10)})) : undefined,
       subPrices:h && h.sub.length ? h.sub.slice(0, 3).map(x => ({price:x.price, sold:x.sold, grade:x.grade})) : undefined};
   });
@@ -1930,7 +1922,7 @@ async function writeCopy(){
   if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
   ui.busy = "Writing the title and description"; render();
   try{
-    const sale = items.slice(0, 40).map(c => ({item:c.isLot ? c.player : lineName(c), kind:c.isLot ? "lot of " + c.members.length : c.pin === "page" ? "price page card" : "single", section:c.section || "", grade:c.isLot ? lotCond(c) : c.grade || "", notes:c.isLot ? lotHobbyText(c) : hobbyShort(c), ask:priceOf(c)}));
+    const sale = items.slice(0, 40).map(c => ({item:c.isLot ? c.player : lineName(c), kind:c.isLot ? "lot of " + lotN(c) + (c.unique ? " (" + c.unique + " different)" : "") : c.pin === "page" ? "price page card" : "single", section:c.section || "", grade:c.isLot ? lotCond(c) : c.grade || "", notes:c.isLot ? lotHobbyText(c) : hobbyShort(c), ask:priceOf(c)}));
     const plan = S.plan && S.plan.text ? String(S.plan.text) : "";
     const r = (await ai("postcopy", {sale, plan})) || {};
     ui.copyOpts = {titles:(Array.isArray(r.titles) ? r.titles : []).map(String).filter(Boolean).slice(0, 3), intro:String(r.intro || "")};
@@ -2016,6 +2008,7 @@ function photoHints(ph){
   return out.map(h => { const a = h.ids.map(id => cardAsk(pcard(id))); return {...h, ask:a.every(x => x != null) ? roundP(a.reduce((s, x) => s + x, 0) * lotDisc()) : null}; });
 }
 function photoHintBox(ph){
+  const yh = yearHintBox(ph); if(yh) return yh;
   const hs = photoHints(ph); if(!hs.length) return "";
   return `<div class="check rq"><strong>Sell some of these together?</strong>${hs.map(h => `<div class="row"><span class="grow">${esc(h.text)} on this photo. One tag for all of them${h.ask != null ? " at " + money(h.ask) : ""}?</span><button class="small primary" data-act="pHintYes" data-k="${esc(h.k)}">Make it one lot</button><button class="small" data-act="pHintNo" data-k="${esc(h.k)}">Keep separate</button></div>`).join("")}<span class="note">Set the lot's price or wording after, in the box under the photo.</span></div>`;
 }
@@ -2047,8 +2040,8 @@ function photoList(ph){
     const head = x.row !== prev && rowName(x.row) ? `<li class="rowhead"><h3>${rowName(x.row)}</h3></li>` : ""; prev = x.row;
     if(x.g){
       const g = x.g, lot = groupLot(g), names = g.ids.map(pcard).filter(Boolean).map(pc => { const f = pc.invId && findCard(pc.invId); return f ? lineName(f.c) : pc.name; });
-      return head + `<li><div><div class="ttl">${esc((g.letter ? g.letter + ": " : "") + (g.label || (lot && lot.player) || "Lot"))} <span class="chip">${g.ids.length} cards, one ask</span></div><div class="meta">${esc(names.join("; "))}</div>${check(lot)}</div>
-        <div class="nums"><label>Ask<input class="money" data-pref="g:${g.id}" inputmode="decimal" value="${groupAsk(g) ?? ""}" placeholder="$"></label><button class="small" data-act="pSplitOne" data-g="${g.id}">Split</button></div></li>`;
+      return head + `<li><div><div class="ttl">${esc((g.letter ? g.letter + ": " : "") + (g.label || (lot && lot.player) || "Lot"))} <span class="chip">${groupN(g) > g.ids.length ? groupN(g) + " cards, " + g.ids.length + " pictured" : g.ids.length + " cards"}, one ask</span></div><div class="meta">${esc(names.join("; "))}</div>${check(lot)}</div>
+        <div class="nums"><label>Cards<input class="money" data-gc="${g.id}" inputmode="numeric" value="${(lot ? lot.count : g.count) ?? ""}" placeholder="${g.ids.length}"></label><label>Ask<input class="money" data-pref="g:${g.id}" inputmode="decimal" value="${groupAsk(g) ?? ""}" placeholder="$"></label><button class="small" data-act="pSplitOne" data-g="${g.id}">Split</button></div></li>`;
     }
     const pc = x.pc, f = pc.invId && findCard(pc.invId), a = cardAsk(pc);
     const src = pc.matched ? "your ask from Review" : f ? "estimate, added to Review" : "estimate, not in Review";
@@ -2216,7 +2209,7 @@ function photoStrip(){
 
 /* ---------- start over: one tap clears the current sale and its photos, keeps what the tool has learned, Undo brings it back ---------- */
 async function startOver(){
-  const cards = S.cards.filter(c => !c.example).reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), photos = ui.photos || [];
+  const cards = cardTotal(S.cards.filter(c => !c.example)), photos = ui.photos || [];
   ui.undo = JSON.stringify(S);
   S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
   ui.undoPhotos = photos; ui.undoPhotosFor = ui.undo;
@@ -2409,22 +2402,104 @@ function priceCommentLines(){
   const yy = y => y ? " '" + String(y).slice(-2) : "";
   const extra = m => { const hs = hobbyShort(m), iss = issuesOf(m)[0], g = String(m.grade || "").replace(/^raw\s+/i, ""), lowG = /^(PR|FR|P|Poor|Fair|GD|Good)\b/i.test(g) ? g : ""; return (hs ? " " + hs.replace("high number", "high #") : "") + (iss || lowG ? " (" + [lowG, iss ? low(iss) : ""].filter(Boolean).join(", ") + ")" : ""); };
   const all = items.flatMap(c => c.isLot ? c.members : [c]), years = all.map(m => +m.year).filter(Boolean), take = numOrNull(st.takeAll);
-  let out = `${plural(all.length, "card", "cards")}${years.length ? ", " + Math.min(...years) + (Math.max(...years) > Math.min(...years) ? " to " + Math.max(...years) : "") : ""}${items.some(c => c.isLot) && items.some(c => !c.isLot) ? ", priced by card with lot prices on the groups" : items.some(c => c.isLot) ? ", sold as lots" : ""}.\n\n`;
+  let out = `${plural(cardTotal(items), "card", "cards")}${years.length ? ", " + Math.min(...years) + (Math.max(...years) > Math.min(...years) ? " to " + Math.max(...years) : "") : ""}${items.some(c => c.isLot) && items.some(c => !c.isLot) ? ", priced by card with lot prices on the groups" : items.some(c => c.isLot) ? ", sold as lots" : ""}.\n\n`;
   if(take > 0) out += `**TAKE EVERYTHING: ${money(take)} shipped**\n\n`;
-  for(const s of [...new Set(items.map(c => c.section || "Other cards"))]){
-    const list = items.filter(c => (c.section || "Other cards") === s), singles = list.filter(c => !c.isLot);
-    if(singles.length) out += `**${s}**\n\n` + singles.map(c => strike(`${c.year ? c.year + " " : ""}${c.player || lineName(c)}${extra(c)} ${c.tagText || money(priceOf(c)) || "price to come"}`, c)).join(" · ") + "\n\n";
-    for(const c of list.filter(x => x.isLot)){
-      const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, ""), lh = lotHobby(c), same = c.members.every(m => String(m.year) === String(c.members[0].year));
-      out += strike(`**${name} | ${n} cards | ${c.tagText || money(priceOf(c)) || "price to come"}${c.splitOk ? "" : " (lot only)"}**`, c) + "\n\n";
-      out += lotCond(c) + (lh.highs ? ` Includes ${plural(lh.highs, "high number", "high numbers")}.` : "") + "\n\n";
-      if(lh.keys.length || lh.stars.length) out += "Key cards: " + [...lh.keys.map(x => x.label), ...lh.stars].slice(0, 12).join(", ") + "\n\n";
-      if(c.splitOk) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}${extra(m)} ${money(priceOf(m)) || ""}`.trim()).join(" · ") + "\n\n";
-      else if(n <= 15) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}`).join(", ") + "\n\n";
+  for(const sec of commentSections(items)){
+    out += `**${sec.name}**\n\n`;
+    for(const [k, list] of byYear(sec.items)){
+      if(k) out += `*${k}*\n\n`;
+      const singles = list.filter(c => !c.isLot);
+      if(singles.length) out += singles.map(c => strike(`${c.year && !k ? c.year + " " : ""}${c.player || lineName(c)}${extra(c)} ${c.tagText || money(priceOf(c)) || "price to come"}`, c)).join(" · ") + "\n\n";
+      for(const c of list.filter(x => x.isLot)){
+        const n = lotN(c), shown = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, ""), lh = lotHobby(c), same = c.members.every(m => String(m.year) === String(c.members[0].year));
+        out += strike(`**${name} | ${n} cards${c.unique ? ", " + c.unique + " different" : ""} | ${c.tagText || money(priceOf(c)) || "price to come"}${c.splitOk ? "" : " (lot only)"}**`, c) + "\n\n";
+        out += lotCond(c) + (lh.highs ? ` Includes ${plural(lh.highs, "high number", "high numbers")}.` : "") + "\n\n";
+        if(lh.keys.length || lh.stars.length) out += "Key cards: " + [...lh.keys.map(x => x.label), ...lh.stars].slice(0, 12).join(", ") + "\n\n";
+        if(c.splitOk) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}${extra(m)} ${money(priceOf(m)) || ""}`.trim()).join(" · ") + (n > shown ? ` · plus ${n - shown} more` : "") + "\n\n";
+        else if(shown <= 15) out += (n > shown ? "Includes " : "") + c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}`).join(", ") + (n > shown ? `, and ${n - shown} more` : "") + "\n\n";
+      }
     }
   }
   out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted above and already priced in. Ask for more photos of anything before you claim.\n`;
   return out.replace(/\n{3,}/g, "\n\n");
+}
+
+/* ---------- lot counts: how many cards a lot holds and how many are different, beyond the ones listed ---------- */
+const lotN = c => c && c.isLot ? Math.max(Number(c.count) || 0, (c.members || []).length) : 1;
+const cardTotal = list => list.reduce((a, c) => a + lotN(c), 0);
+function countBox(c){
+  const n = c.members.length, more = lotN(c) - n;
+  return `<div class="${c.countSet ? "fields" : "check rq"} countbox">${c.countSet ? "" : `<span><strong>How many cards are in this lot?</strong> The tool lists ${n}. If the lot holds more, enter the total and how many are different. Unique cards drive the price of a year lot.</span>`}
+    <div class="row"><label class="inline">Cards in lot <input class="money" data-lc="count" data-lid="${c.id}" inputmode="numeric" value="${c.count ?? ""}" placeholder="${n}"></label><label class="inline">Different <input class="money" data-lc="unique" data-lid="${c.id}" inputmode="numeric" value="${c.unique ?? ""}" placeholder="${lotN(c)}"></label>${more > 0 ? `<label class="inline">Each unlisted card $<input class="money" data-lc="extraEach" data-lid="${c.id}" inputmode="decimal" value="${c.extraEach ?? ""}" placeholder="0"></label>` : ""}${c.countSet ? "" : `<button class="small" data-act="countJust" data-lid="${c.id}">Just these ${n}</button>`}</div>
+    ${more > 0 ? `<span class="note">${plural(more, "card is", "cards are")} not listed one by one. ${Number(c.extraEach) > 0 ? `They add ${money(more * Number(c.extraEach))} to the cards' total before the lot discount.` : "The lot has no price until you give them a value each, type the lot price in Ask, or run Double-check prices, which prices the lot on its full count."}</span>` : ""}</div>`;
+}
+function setLotCount(lot, count, unique){
+  if(!lot) return;
+  if(Number(count) > 0) lot.count = Math.round(Number(count));
+  if(Number(unique) > 0) lot.unique = Math.min(Math.round(Number(unique)), lotN(lot));
+  lot.countSet = true; relot(lot);
+}
+function setGroupCount(g, count, unique){
+  if(Number(count) > 0) g.count = Math.round(Number(count));
+  if(Number(unique) > 0) g.unique = Math.round(Number(unique));
+  const lot = groupLot(g); if(lot && (g.count || g.unique)) setLotCount(lot, g.count, g.unique);
+}
+const groupN = g => { const lot = groupLot(g); return lot ? lotN(lot) : Math.max(Number(g.count) || 0, g.ids.length); };
+
+/* ---------- several years on one photo: offer each year as its own lot ---------- */
+function photoYearHint(ph){
+  if(!ph || !ph.cards || (ph.hintSkip || []).includes("y:all")) return null;
+  const free = ph.cards.filter(pc => !(ph.hidden || []).includes(pc.id) && !(ph.groups || []).some(g => g.ids.includes(pc.id)));
+  const card = pc => { const f = pc.invId && findCard(pc.invId); return f ? f.c : pc.f || {}; }, ys = new Map();
+  free.forEach(pc => { const c = card(pc), k = c.year && c.set ? c.year + " " + c.set : ""; if(!k) return; if(!ys.has(k)) ys.set(k, []); ys.get(k).push(pc.id); });
+  const groups = [...ys].filter(([, ids]) => ids.length >= 2).sort((a, b) => a[0].localeCompare(b[0])).map(([k, ids]) => ({k, ids}));
+  return groups.length >= 2 ? groups : null;
+}
+function yearHintBox(ph){
+  const gs = photoYearHint(ph); if(!gs) return "";
+  return `<div class="check rq"><strong>This photo shows ${gs.length} years.</strong> <span>${esc(gs.map(g => `${g.k} (${g.ids.length} pictured)`).join(", "))}. Make each year its own lot? If a lot holds more cards than the photo shows, enter its total and how many are different.</span>
+    ${gs.map(g => `<div class="row"><span class="grow"><strong>${esc(g.k)}</strong></span><label class="inline">Cards in lot <input class="money" data-yc="${esc(g.k)}" inputmode="numeric" value="${esc((ui.yc || {})[g.k] || "")}" placeholder="${g.ids.length}"></label><label class="inline">Different <input class="money" data-yu="${esc(g.k)}" inputmode="numeric" value="${esc((ui.yu || {})[g.k] || "")}" placeholder="same"></label></div>`).join("")}
+    <div class="row"><button class="small primary" data-act="pYears">Make ${gs.length} year lots</button><button class="small" data-act="pHintNo" data-k="y:all">Keep them separate</button></div></div>`;
+}
+function makeYearLots(){
+  const ph = ui.photo, gs = photoYearHint(ph); if(!gs) return;
+  const said = [];
+  for(const y of gs){
+    photoGroup(y.ids, 0, y.k + " lot");
+    const g = ph.groups.find(x => x.ids.length === y.ids.length && x.ids.every(id => y.ids.includes(id)));
+    if(g){ setGroupCount(g, (ui.yc || {})[y.k], (ui.yu || {})[y.k]); said.push(`${y.k}: ${plural(groupN(g), "card", "cards")}${groupAsk(g) != null ? " at " + money(groupAsk(g)) : ""}`); }
+  }
+  ui.yc = {}; ui.yu = {}; relabel(); save();
+  ph.msg = `Made ${plural(said.length, "year lot", "year lots")}: ${said.join("; ")}. The price comment lists each year on its own under this photo.`;
+}
+
+/* ---------- the price comment's sections: by plan section, or by photo and page; then by year inside each ---------- */
+function commentSections(items){
+  const pics = S.settings.commentByPhoto ? photosWithCards() : [];
+  if(!pics.length) return [...new Set(items.map(c => c.section || "Other cards"))].map(s => ({name:s, items:items.filter(c => (c.section || "Other cards") === s)}));
+  const done = new Set(), secs = new Map();
+  pics.forEach(x => {
+    const cs = [...(x.cards || [])].filter(pc => pc.invId && !(x.hidden || []).includes(pc.id)).sort((a, b) => ((a.box.y0 + a.box.y1) - (b.box.y0 + b.box.y1)) || (a.box.x0 - b.box.x0));
+    const rows = []; let cur = null;
+    for(const pc of cs){ const yc = (pc.box.y0 + pc.box.y1) / 2, h = pc.box.y1 - pc.box.y0; if(!cur || yc - cur.yc > h * .5){ cur = {yc, list:[]}; rows.push(cur); } cur.list.push(pc); }
+    const seq = [];
+    rows.forEach(r => r.list.sort((a, b) => a.box.x0 - b.box.x0).forEach(pc => { const f = findCard(pc.invId), top = f && (f.lot || f.c); if(top && items.includes(top) && !done.has(top.id)){ done.add(top.id); seq.push(top); } }));
+    const key = x.page ? "pg:" + x.page.id : x.id;
+    if(!secs.has(key)) secs.set(key, {name:x.page ? x.page.name : "Photo " + (ui.photos.indexOf(x) + 1), items:[]});
+    secs.get(key).items.push(...seq);
+  });
+  const out = [...secs.values()].filter(v => v.items.length), rest = items.filter(c => !done.has(c.id));
+  if(rest.length) out.push({name:"Other cards", items:rest});
+  return out;
+}
+function yearOf(c){
+  const list = c.isLot ? c.members : [c], y = list[0] && list[0].year, s = list[0] && list[0].set;
+  return y && list.every(m => String(m.year) === String(y) && String(m.set || "") === String(s || "")) ? [y, s].filter(Boolean).join(" ") : "";
+}
+function byYear(list){
+  const keys = [...new Set(list.map(yearOf))];
+  if(keys.filter(Boolean).length < 2) return [["", list]];
+  return keys.sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b)).map(k => [k || "Mixed years", list.filter(c => yearOf(c) === k)]);
 }
 
 /* ---------- render + events ---------- */
@@ -2514,6 +2589,8 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "pYears" && ui.photo) makeYearLots();
+  else if(act === "countJust"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot){ f.c.count = f.c.members.length; f.c.countSet = true; relot(f.c); } }
   else if(act === "knowLearn") return learnPost();
   else if(act === "knowKeep" && ui.learned){ const keep = ui.learned.facts.filter(f => f.keep); S.hobbyNotes = [...(S.hobbyNotes || []), ...keep.map(f => ({id:uid(), year:f.year, set:f.set, num:f.num, text:f.text}))]; ui.learned.facts = []; ui.knowMsg = `Kept ${plural(keep.length, "fact", "facts")}. They show on matching cards and go with every pricing and writing task.`; if(!ui.learned.style) ui.learned = null; }
   else if(act === "knowStyle" && ui.learned){ S.settings.styleNotes = ui.learned.style; ui.learned = null; ui.knowMsg = "Your posts will follow this layout. Edit it under Your post style."; }
@@ -2633,6 +2710,10 @@ document.addEventListener("change", e => {
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
+  if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
+  if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
+  if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
+  if(t.dataset.yu){ (ui.yu = ui.yu || {})[t.dataset.yu] = t.value; return; }
   if(t.dataset.split){ const c = S.cards.find(x => x.id === t.dataset.split); if(c){ c.splitOk = t.checked; save(); } return render(); }
   if(t.dataset.lk && ui.learned){ const f = ui.learned.facts[+t.dataset.lk]; if(f) f.keep = t.checked; return; }
   if(t.id === "knowset"){ ui.knowSet = t.value; return; }
