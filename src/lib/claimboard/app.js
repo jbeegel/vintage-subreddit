@@ -172,7 +172,7 @@ async function scan(files){
     for(const c of found){
       const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
       if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-      S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", comp:null, price:null});
+      S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
       added++;
     }
     ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
@@ -212,27 +212,30 @@ function vInventory(){
       <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="inline">Price <input class="money" id="set-discount" type="number" min="0" max="60" value="${esc(S.settings.discount)}" style="width:60px">% under comp</label>
     </div>
-    <p class="note">Every scanned card is priced straight away from an AI estimate of recent solds, less your discount. Enter a real sold price under Comp to replace the estimate, or type a sub price to override. The post follows the sort order you pick here.</p>
+    <p class="note">Each card shows a rough raw value for its condition and a suggested Reddit ask, which is that value less your discount. Tick cards to sell them as singles, bundle them into a year lot, or put them on a per-card price page. A sold comp or a typed ask replaces the estimate.</p>
+    <div class="row"><button class="small" data-act="selAll">Select all open cards</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}</div>
     <ul class="cards">${ordered().map(rowInv).join("") || `<li><span class="note">Nothing yet. Scan a table or add a row.</span></li>`}</ul>
+    ${selBar()}
   </div></section>`;
 }
 function rowInv(c){
   const low = (c.conf ?? 1) < .75, p = priceOf(c), mid = c.aiLow != null && c.aiHigh != null ? Math.round((c.aiLow + c.aiHigh) / 2) : null;
   return `<li data-id="${c.id}">
-    <div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
-      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}${c.where ? " · " + esc(c.where) : ""}</div></div>
+    <div class="pickrow">${c.status === "open" && !c.isLot ? `<input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}>` : ""}<div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
+      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}${c.where ? " · " + esc(c.where) : ""}</div>
+      ${valueLine(c)}</div></div>
     <div class="nums">
-      <label>Comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label>
-      <label>Sub price<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
+      <label>Sold comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label>
+      <label>Reddit ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
     </div>
     <div class="links">
       ${c.isLot ? `<span class="chip ok">lot of ${c.members.length}</span><button class="small" data-act="unlot">Break lot apart</button>` : ""}
-      ${c.pin === "single" ? `<span class="chip ok">set aside as a single</span>` : ""}
+      ${c.section ? `<span class="chip ok">${esc(c.section)}</span>` : c.pin === "single" ? `<span class="chip ok">set aside as a single</span>` : ""}
       ${low ? `<span class="chip warn">low confidence ${Math.round((c.conf || 0) * 100)}%</span>` : ""}
       ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
-      ${mid != null ? `<span class="chip" title="From the model's general knowledge. Not a sold comp.">${c.comp == null && c.price == null ? "Priced from AI estimate" : "AI estimate"} ${money(c.aiLow)} to ${money(c.aiHigh)}, not a sold comp</span>` : ""}
       ${links(c)}
     </div>
+    ${whyBox(c)}
     <details class="edit"><summary>Edit details</summary><div class="fields">
       ${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}
       <button class="small" data-act="del">Remove row</button></div></details>
@@ -247,7 +250,7 @@ function buildPost(){
   let b = (st.intro ? st.intro + "\n\n" : "") + `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\n`;
   const head = `| # | Card | Condition | Price |${comps ? " Recent comp |" : ""}\n|:-|:-|:-|:-|${comps ? ":-|" : ""}\n`;
   rows.forEach((c, i) => {
-    if(i === 0 || (c.section || "") !== (rows[i - 1].section || "")) b += (i ? "\n" : "") + (c.section ? "**" + c.section + "**\n\n" : "") + head;
+    if(i === 0 || (c.section || "") !== (rows[i - 1].section || "")) b += (i ? "\n" : "") + (c.section ? "**" + c.section + "**\n\n" : i ? "**Other cards**\n\n" : "") + head;
     const cond = [c.grade, c.flaws].filter(Boolean).join(", ").replace(/\|/g, "/"), name = title(c).replace(/\|/g, "/");
     const pr = c.status === "sold" ? "**SOLD**" : c.status === "claimed" ? `${money(priceOf(c))} (pending)` : money(priceOf(c));
     b += `| ${i + 1} | ${c.status === "sold" ? "~~" + name + "~~" : name} | ${cond} | ${pr} |${comps ? " " + (c.comp != null ? money(c.comp) + (c.compSrc && c.compSrc !== "example" ? " " + c.compSrc : "") : "") + " |" : ""}\n`;
@@ -383,6 +386,101 @@ function vRadar(){
   </div></section>`;
 }
 
+/* ---------- sort cards by hand: singles, a year lot, or a per-card price page ---------- */
+ui.sel = new Set(); ui.pagePrice = 10; ui.selMsg = "";
+function valueLine(c){
+  if(c.isLot) return "";
+  const p = priceOf(c), ask = p != null ? " · Reddit ask " + money(p) : "";
+  if(c.comp != null) return `<div class="val">Sold comp ${money(c.comp)}${ask}</div>`;
+  if(c.aiLow != null && c.aiHigh != null) return `<div class="val">Raw value in this condition ${money(c.aiLow)} to ${money(c.aiHigh)}${ask} <span class="note">AI estimate, not a sold comp</span></div>`;
+  return `<div class="val note">No value yet. Enter a sold comp or an ask${p != null ? " (ask is " + money(p) + ")" : ""}.</div>`;
+}
+const secRank = n => /single/i.test(n) ? 0 : /per card|each/i.test(n) ? 1 : 2;
+function ensureSection(name){
+  S.plan = S.plan || {text:"", sections:[], photos:[], gaps:[]};
+  const s = S.plan.sections; if(s.includes(name)) return;
+  const pageNum = x => parseFloat(String(x).replace(/[^0-9.]/g, "")) || 0;
+  let i = s.findIndex(x => secRank(x) > secRank(name) || (secRank(x) === 1 && secRank(name) === 1 && pageNum(x) < pageNum(name)));
+  if(i < 0) i = s.length;
+  s.splice(i, 0, name);
+}
+function detach(c){
+  if(c.pin === "page"){ c.price = c.prevPrice ?? null; delete c.prevPrice; }
+  delete c.pin; delete c.manual;
+}
+function resetPages(){ S.cards.forEach(c => { if(c.status === "open" && !c.manual && c.pin === "page") detach(c); }); }
+const selected = () => S.cards.filter(c => ui.sel.has(c.id) && c.status === "open" && !c.isLot);
+function assignSingles(){
+  const cs = selected();
+  cs.forEach(c => { detach(c); c.pin = "single"; c.manual = true; c.section = "Singles"; });
+  if(cs.length) ensureSection("Singles");
+  return cs.length + " set as singles.";
+}
+function assignPage(price){
+  if(!(price > 0)) return "Enter a price per card first.";
+  const cs = selected(), name = "$" + price + " per card";
+  cs.forEach(c => { detach(c); c.prevPrice = c.price ?? null; c.price = price; c.pin = "page"; c.manual = true; c.section = name; });
+  if(cs.length) ensureSection(name);
+  const over = cs.filter(c => { const b = basisOf(c); return b != null && b * (1 - S.settings.discount / 100) >= price * 1.5; }).length;
+  return cs.length + " put on the " + name + " page." + (over ? " " + over + (over === 1 ? " of them looks" : " of them look") + " worth well over that. Check before posting." : "");
+}
+function describeLot(lot){
+  const top = [...lot.members].sort((a, b) => (priceOf(b) || 0) - (priceOf(a) || 0)).slice(0, 4).map(c => c.player).filter(Boolean);
+  lot.flaws = top.length ? "includes " + top.join(", ") : "";
+  const g = [...new Set(lot.members.map(c => c.grade).filter(Boolean))];
+  lot.grade = g.length <= 2 ? g.join(", ") : "mixed condition";
+}
+function assignYearLots(){
+  const cs = selected(), groups = new Map(); let made = 0, alone = 0;
+  cs.forEach(c => { const k = [c.year || "Unknown year", c.set || ""].join(" ").trim(); if(!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
+  for(const [k, list] of groups){
+    let lot = S.cards.find(x => x.isLot && x.manual && x.key === k && x.status === "open");
+    if(!lot && list.length < 2){ alone++; continue; }
+    list.forEach(c => { detach(c); c.pin = "lot"; c.section = "Lots by year"; });
+    S.cards = S.cards.filter(x => !list.includes(x));
+    if(!lot){ lot = {id:uid(), status:"open", isLot:true, manual:true, key:k, members:[], section:"Lots by year", year:"", set:"", num:"", player:k + " lot (0 cards)", grade:"", flaws:"", conf:1, comp:null, price:null}; S.cards.push(lot); }
+    lot.members.push(...list); describeLot(lot); relot(lot); made++;
+  }
+  if(made) ensureSection("Lots by year");
+  return [made ? made + " year lot" + (made === 1 ? "" : "s") + " built." : "", alone ? alone + " card" + (alone === 1 ? " has" : "s have") + " no other selected card from the same year and set, so " + (alone === 1 ? "it was" : "they were") + " left alone." : ""].filter(Boolean).join(" ");
+}
+function selBar(){
+  const n = selected().length;
+  if(!n) return ui.selMsg ? `<p class="note">${esc(ui.selMsg)}</p>` : "";
+  return `<div class="bar"><strong>${n} selected</strong>
+    <button class="small" data-act="asSingles">Sell as singles</button>
+    <button class="small" data-act="asYearLot">Put in a year lot</button>
+    <span class="row" style="gap:6px"><button class="small" data-act="asPage">Put on a page at</button><span>$</span><input class="money" id="pageprice" inputmode="decimal" value="${esc(ui.pagePrice)}" aria-label="Price per card"><span>per card</span></span>
+  </div>`;
+}
+
+/* ---------- evidence trail: every value, ask and placement can be opened to see where it came from ---------- */
+function whyLines(c){
+  const out = [], d = Number(S.settings.discount) || 0, p = priceOf(c);
+  if(c.isLot){
+    const sum = c.members.reduce((a, m) => a + (priceOf(m) || 0), 0), b = Number(S.settings.lotDiscount ?? 10);
+    out.push(["In this lot", c.members.map(m => title(m) + (priceOf(m) != null ? " " + money(priceOf(m)) : " (no price)")).join("; ")]);
+    out.push(["Lot price", c.members.some(m => priceOf(m) == null) ? "Not set, because at least one card inside has no price." : `The cards' asks add up to ${money(sum)}. Less the ${b}% bundle discount and rounded, that is ${money(roundP(sum * (1 - b / 100)))}.` + (p !== roundP(sum * (1 - b / 100)) ? ` You changed it to ${money(p)}.` : "")]);
+    out.push(["Why a lot", c.why || (c.manual ? "You grouped these by hand." : "Grouped by the sale plan.")]);
+    return out;
+  }
+  out.push(["Identified as", title(c) + (c.conf != null ? `, ${Math.round(c.conf * 100)}% confidence.` : ".") + (c.idWhy ? " " + c.idWhy : "") + (c.needsBack ? " The back should be checked to confirm." : "")]);
+  out.push(["Condition seen", [c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded."]);
+  if(c.comp != null) out.push(["Value", `Sold comp of ${money(c.comp)} that you entered${c.compSrc && c.compSrc !== "example" ? " (" + c.compSrc + ")" : c.compSrc === "example" ? " (example figure)" : ""}.`]);
+  else if(c.aiLow != null && c.aiHigh != null) out.push(["Value", `${money(c.aiLow)} to ${money(c.aiHigh)} raw in this condition. ${c.valueWhy || ""} This is an AI estimate from general knowledge, not a record of actual sales. Use the eBay solds and SportsCardsPro links to confirm.`]);
+  else out.push(["Value", "None yet."]);
+  const basis = basisOf(c), auto = basis != null ? roundP(basis * (1 - d / 100)) : null;
+  if(c.pin === "page") out.push(["Reddit ask", `${money(p)}, the page price.` + (auto != null ? ` Priced alone it would be ${money(auto)}.` : "")]);
+  else if(c.price != null) out.push(["Reddit ask", `${money(p)}, typed by you.` + (auto != null ? ` The worked-out ask would be ${money(auto)}.` : "")]);
+  else if(basis != null) out.push(["Reddit ask", `${c.comp != null ? "Sold comp" : "Midpoint of the value range"} ${money(Math.round(basis))}, less ${d}% because there are no platform fees, rounded to ${money(auto)}.`]);
+  const min = singleMin();
+  if(c.section || c.pin) out.push(["Placement", c.pin === "page" ? `On the ${c.section} page${c.manual ? ", placed by you" : ", placed by the sale plan"}.` : c.pin === "single" ? `A single${c.manual ? ", placed by you" : ", agreed by you from the suggestions"}.` : c.pin === "lot" ? "Kept for a lot, your choice." : `In "${c.section}", placed by the sale plan.`]);
+  else if(min && (p || 0) >= min) out.push(["Suggestion", `Sell as a single: its ask of ${money(p)} is at or above your ${money(min)} line.`]);
+  else if(min && p != null) out.push(["Suggestion", `Lot or page candidate: its ask of ${money(p)} is under your ${money(min)} line for singles.`]);
+  return out;
+}
+const whyBox = c => `<details class="edit why"><summary>Why this ${c.isLot ? "lot and price" : "value and ask"}</summary><dl>${whyLines(c).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`;
+
 /* ---------- single suggestions: cards worth selling alone are pulled out for a one-tap decision ---------- */
 const singleMin = () => Number(S.settings.singleMin ?? 20) || 0;
 function singleCandidates(){
@@ -428,7 +526,8 @@ function singlesPanel(){
   return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>Set aside as singles${cs.length ? ` <span class="note">${cs.length} suggested</span>` : ""}</h2>
     <label class="inline">Suggest at $<input class="money" id="set-singleMin" inputmode="decimal" value="${esc(S.settings.singleMin ?? 20)}" style="width:64px"> and up</label></div>
     ${cs.length ? `<p class="note">These are worth enough to sell on their own. Agree and the tool keeps them out of the lots.</p>
-    <ul class="cards">${cs.map(({c, lot}) => `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, lot ? "now in " + lot.player : c.where].filter(Boolean).join(" · "))}</div></div>
+    <ul class="cards">${cs.map(({c, lot}) => `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, lot ? "now in " + lot.player : c.where].filter(Boolean).join(" · "))}</div>
+        <div class="meta">Why: its ask of ${money(priceOf(c))} is at or above your ${money(min)} line.${c.valueWhy ? " " + esc(c.valueWhy) : ""}</div></div>
       <div class="nums"><button class="primary" data-act="single">Make it a single</button><button class="small" data-act="keeplot">Keep in the lot</button></div></li>`).join("")}</ul>
     ${cs.length > 1 ? `<div class="row"><button data-act="singleAll">Agree to all ${cs.length}</button></div>` : ""}`
     : `<p class="note">No undecided cards at $${min} or more right now.</p>`}
@@ -438,22 +537,23 @@ function singlesPanel(){
 /* ---------- sale plan: the seller describes the sale, the tool shapes singles, lots, title and photo list around it ---------- */
 const PRESETS = [
   "A page or two of singles first, best cards up top. Everything else in lots, mostly by year.",
+  "Best cards as singles. $10 and $5 per card pages for the middle. Year lots for the rest.",
   "All singles, highest price first.",
   "Stars and Hall of Famers as singles. Commons bundled into lots by set and year.",
   "Team lots where I have five or more of a team. Singles for the rest."
 ];
 function unlotAll(){
   const out = [];
-  for(const c of S.cards){ if(c.isLot && c.status === "open" && Array.isArray(c.members)) out.push(...c.members); else out.push(c); }
+  for(const c of S.cards){ if(c.isLot && c.status === "open" && !c.manual && Array.isArray(c.members)) out.push(...c.members); else out.push(c); }
   S.cards = out;
 }
 function applyPlan(r, text){
-  const open = new Map(S.cards.filter(c => c.status === "open").map(c => [c.id, c]));
-  const rest = S.cards.filter(c => c.status !== "open"), out = [], names = [], pinned = [];
+  const open = new Map(S.cards.filter(c => c.status === "open" && !c.manual).map(c => [c.id, c]));
+  const rest = S.cards.filter(c => c.status !== "open" || c.manual), out = [], names = [], pinned = [];
   const bundle = 1 - Number(S.settings.lotDiscount ?? 10) / 100;
   for(const sec of (r.sections || [])){
     const name = String(sec.name || "Cards"); names.push(name);
-    for(const id of (sec.rows || [])){ const c = open.get(id); if(c){ open.delete(id); c.section = name; out.push(c); } }
+    for(const id of (sec.rows || [])){ const c = open.get(id); if(c){ open.delete(id); c.section = name; if(sec.perCard > 0){ c.prevPrice = c.price ?? null; c.price = Number(sec.perCard); c.pin = "page"; } out.push(c); } }
     for(const lot of (sec.lots || [])){
       const members = (lot.rows || []).map(id => { const c = open.get(id); if(c) open.delete(id); return c; }).filter(Boolean);
       const pulled = members.filter(c => c.pin === "single");
@@ -461,7 +561,7 @@ function applyPlan(r, text){
       if(!members.length) continue;
       if(members.length === 1){ members[0].section = name; out.push(members[0]); continue; }
       const sum = members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = members.some(c => priceOf(c) == null);
-      out.push({id:uid(), status:"open", isLot:true, members, section:name, year:"", set:"", num:"", player:String(lot.name || "Lot") + " (" + members.length + " cards)", grade:String(lot.condition || ""), flaws:lot.highlights ? "includes " + lot.highlights : "", conf:1, comp:null, price: sum && !unpriced ? roundP(sum * bundle) : null});
+      out.push({id:uid(), status:"open", isLot:true, members, section:name, year:"", set:"", num:"", player:String(lot.name || "Lot") + " (" + members.length + " cards)", grade:String(lot.condition || ""), flaws:lot.highlights ? "includes " + lot.highlights : "", why:String(lot.why || ""), conf:1, comp:null, price: sum && !unpriced ? roundP(sum * bundle) : null});
     }
   }
   if(pinned.length){
@@ -472,6 +572,7 @@ function applyPlan(r, text){
   if(open.size){ names.push("Other"); for(const c of open.values()){ c.section = "Other"; out.push(c); } }
   S.cards = [...out, ...rest];
   S.plan = {text, sections:names.filter((n, i) => names.indexOf(n) === i), photos:(r.photos || []).map(String), gaps:(r.gaps || []).map(String)};
+  rest.forEach(c => { if(c.manual && c.section) ensureSection(c.section); });
   if(r.title) S.settings.title = String(r.title);
   if(r.intro) S.settings.intro = String(r.intro);
   S.settings.sort = "added";
@@ -482,8 +583,8 @@ async function runPlan(){
   if(!cap.ai){ ui.planMsg = aiOff(); return render(); }
   ui.planDraft = text; ui.busy = ui.planMsg = "Sorting your cards into the plan"; render();
   try{
-    unlotAll();
-    const rows = S.cards.filter(c => c.status === "open").map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c), pin:c.pin || null}));
+    unlotAll(); resetPages();
+    const rows = S.cards.filter(c => c.status === "open" && !c.manual).map(c => ({id:c.id, card:title(c), grade:c.grade || "", price:priceOf(c), pin:c.pin || null}));
     const r = await ai("plan", {text, rows});
     applyPlan(r || {}, text);
     const lots = S.cards.filter(c => c.isLot).length;
@@ -699,11 +800,17 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "selAll"){ S.cards.forEach(x => { if(x.status === "open" && !x.isLot) ui.sel.add(x.id); }); return render(); }
+  else if(act === "selNone"){ ui.sel.clear(); return render(); }
+  else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
+    ui.selMsg = act === "asSingles" ? assignSingles() : act === "asYearLot" ? assignYearLots() : assignPage(numOrNull(ui.pagePrice));
+    if(!ui.selMsg.startsWith("Enter")) ui.sel.clear();
+  }
   else if(act === "single" || act === "keeplot"){ const h = el.closest("[data-sid]"); if(h) setAside(h.dataset.sid, act === "single" ? "single" : "lot"); }
   else if(act === "singleAll"){ singleCandidates().forEach(x => setAside(x.c.id, "single")); }
   else if(act === "preset"){ ui.planDraft = PRESETS[+el.dataset.i]; return render(); }
-  else if(act === "unplan"){ unlotAll(); S.cards.forEach(x => { delete x.section; }); S.plan = null; ui.planMsg = ""; }
-  else if(act === "unlot" && c && c.isLot){ const i = S.cards.indexOf(c); S.cards.splice(i, 1, ...c.members); }
+  else if(act === "unplan"){ S.cards.forEach(x => { if(x.isLot) x.manual = false; }); unlotAll(); S.cards.forEach(x => { if(x.status === "open"){ detach(x); delete x.section; } }); S.plan = null; ui.planMsg = ui.selMsg = ""; ui.sel.clear(); }
+  else if(act === "unlot" && c && c.isLot){ const i = S.cards.indexOf(c); c.members.forEach(m => { detach(m); delete m.section; }); S.cards.splice(i, 1, ...c.members); }
   else if(act === "gclear"){ S.grades = []; }
   else if(act === "paid"){
     S.cards.filter(c => c.status === "claimed" && c.claimBy === el.dataset.o).forEach(c => {
@@ -724,6 +831,8 @@ document.addEventListener("click", async e => {
 document.addEventListener("change", e => {
   const t = e.target;
   if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) scan(f); return; }
+  if(t.dataset.sel){ if(t.checked) ui.sel.add(t.dataset.sel); else ui.sel.delete(t.dataset.sel); return render(); }
+  if(t.id === "pageprice"){ ui.pagePrice = t.value; return; }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }

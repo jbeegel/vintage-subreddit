@@ -15,10 +15,12 @@ Rules:
 - Do not guess. If the photo is blurry, cropped or ambiguous, still list the card but lower "conf" and say why in "flaws".
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
 - "needsBack" is true when the back must be seen to confirm identity, variation or condition.
-- "aiLow" and "aiHigh" are a rough USD range for recent sold prices in that condition from your general knowledge, or null if unsure. They are shown to the seller as an unverified estimate.
+- "idWhy": one short sentence on what in the photo identifies the card (design, name on the card, number read or inferred).
+- "valueWhy": one short sentence giving the usual range for this card and how the condition you see moves it.
+- "aiLow" and "aiHigh" are a rough USD range for what this exact card sells for raw IN THE CONDITION YOU SEE, from your general knowledge of recent sales, or null if unsure. Condition drives vintage value: price the copy in the photo, not a clean example. A creased, written-on, trimmed, stained or badly off-center card is worth a fraction of a VG-EX copy, so step the range down for every flaw you listed. For slabbed cards, price that grade. The range is shown to the seller as an unverified estimate.
 
 Return JSON only, no prose:
-{"cards":[{"year":1958,"set":"Topps","num":"1","player":"Ted Williams","variation":null,"grade":"Raw VG","flaws":"corner wear","conf":0.9,"needsBack":false,"aiLow":150,"aiHigh":250,"where":"image 1, top row, 2nd from left"}]}`;
+{"cards":[{"year":1958,"set":"Topps","num":"1","player":"Ted Williams","variation":null,"grade":"Raw VG","flaws":"corner wear","conf":0.9,"needsBack":false,"aiLow":150,"aiHigh":250,"idWhy":"1958 Topps design, name and team read from the front","valueWhy":"VG copies usually sell around $200; corner wear keeps it at the low end","where":"image 1, top row, 2nd from left"}]}`;
 }
 
 export function claimsPrompt(lots: unknown, text: string): string {
@@ -48,13 +50,14 @@ Organise every row so the post carries out the plan.
 - A lot has at least two cards. Name it the way a collector would, e.g. "1960 Topps commons and minor stars". Give its condition range and up to five highlight players.
 - Order sections the way the plan says. Order singles by price, highest first, unless the plan says otherwise. "A page" of singles means roughly 9 to 18 cards.
 - If the plan is silent on something, choose what sells best: stars and Hall of Famers as singles, low-value commons bundled.
+- If the plan asks for per-card price pages (for example "$10 per card"), make one section per price with "perCard" set to that number and list its rows. Put a card on a page only when its own price is close to or below the page price. Never bury a card worth much more.
 - "title": under 120 characters, starts with "[FS]", names the best two or three cards and the shape of the sale.
 - "intro": one or two plain sentences on what is in the sale and how it is organised. No hype. Do not restate payment or shipping terms.
 - "photos": the photos to take, in order. Each entry says what it shows (which section, which cards or lots). At most 20 singles per photo so they stay legible. Lots fanned out with the best cards on top. Every photo includes a handwritten note with the seller's username and today's date.
 - "gaps": short notes where the inventory cannot meet the plan or the seller needs to decide something. Empty if none.
 
 Return JSON only:
-{"sections":[{"name":"Singles","rows":["id1","id2"]},{"name":"Lots by year","lots":[{"name":"1960 Topps commons","rows":["id3","id4"],"condition":"PR to VG","highlights":"Player A, Player B"}]}],"title":"[FS] ...","intro":"...","photos":["Photo 1: ..."],"gaps":[]}`;
+{"sections":[{"name":"Singles","rows":["id1","id2"]},{"name":"$10 per card","perCard":10,"rows":["id5"]},{"name":"Lots by year","lots":[{"name":"1960 Topps commons","rows":["id3","id4"],"condition":"PR to VG","highlights":"Player A, Player B","why":"one sentence on why these belong together"}]}],"title":"[FS] ...","intro":"...","photos":["Photo 1: ..."],"gaps":[]}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
