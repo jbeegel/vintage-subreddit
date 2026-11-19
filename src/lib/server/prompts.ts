@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -155,6 +155,19 @@ Look at every photo, then:
 
 Return JSON only: {"mixed":false,"year":1958,"set":"Topps","num":"1","player":"Ted Williams","variation":null,"grade":"Raw VG","flaws":["crease lower left","pen mark on back"],"aiLow":120,"aiHigh":170,"conf":0.96,"sawBack":true,"idWhy":"Card number 1 on the back","valueWhy":"VG copies usually sell around $200; the crease cuts that","summary":"The back confirms 1958 Topps #1. The pen mark on the back lowers the value range."}`;
 }
+
+export const locatePrompt = `This photo shows vintage baseball cards laid out for a sale on Reddit, often with a handwritten note, boxes, binders or other objects around them. Find every trading card in the photo.
+
+For each card give:
+- "box": where the card is, as fractions of the image width and height measured from the top-left corner, for example {"x0":0.12,"y0":0.40,"x1":0.21,"y1":0.58}. For a slabbed card, box the whole holder. For a card in a top loader or sleeve, box the card itself. Be precise: a price tag is placed just under each box.
+- "year", "set", "num" (only if you can read it or are certain from the checklist), "player" (for a multi-player or subject card, its title, for example "Fence Busters" or "1969 Rookie Stars"), "variation".
+- "grade": a conservative raw grade from what you can see, or the label grade for a slab. "flaws": short phrases separated by semicolons.
+- "aiLow" and "aiHigh": a rough USD range for this card in this condition from your general knowledge of recent sales, or null if unsure.
+- "conf": how sure you are of the identification.
+
+Ignore the handwritten note, boxes, binders and anything that is not a card. List cards left to right, top row first. Asks are firm on this subreddit; do not suggest room for offers.
+
+Return JSON only: {"cards":[{"box":{"x0":0.03,"y0":0.41,"x1":0.15,"y1":0.59},"year":1969,"set":"Topps","num":"100","player":"Hank Aaron","variation":null,"grade":"Raw VG","flaws":"corner wear","aiLow":40,"aiHigh":60,"conf":0.9}]}`;
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
 
