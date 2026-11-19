@@ -963,11 +963,36 @@ function drawPhoto(){
     g.font = `800 ${3 * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
     const w = g.measureText(t.text).width + 1.8 * u, h = 4.6 * u, x = Math.min(ph.w - w, Math.max(0, t.x * ph.w - w / 2)), y = Math.min(ph.h - h, Math.max(0, t.y * ph.h - h / 2));
     g.fillStyle = "#fff"; g.strokeStyle = "#0a120f"; g.lineWidth = .35 * u;
+    t.box = {x, y, w, h};
     g.beginPath(); g.roundRect(x, y, w, h, .8 * u); g.fill(); g.stroke();
     g.fillStyle = "#0a120f"; g.fillText(t.text, x + .9 * u, y + .9 * u);
   }
 }
+/* Drag a tag to move it. A press that starts on a tag never places a new one. */
+function tagAt(pt){
+  const ph = ui.photo, cv = $("#pcanvas"); if(!ph || !cv) return null;
+  const r = cv.getBoundingClientRect(), k = ph.w / r.width, x = (pt.clientX - r.left) * k, y = (pt.clientY - r.top) * k, m = Math.max(ph.w, ph.h) / 100 * 1.5;
+  for(let i = ph.tags.length - 1; i >= 0; i--){ const b = ph.tags[i].box; if(b && x >= b.x - m && x <= b.x + b.w + m && y >= b.y - m && y <= b.y + b.h + m) return ph.tags[i]; }
+  return null;
+}
+document.addEventListener("pointerdown", e => {
+  if(e.target.id !== "pcanvas") return;
+  const t = tagAt(e); if(!t) return;
+  ui.drag = t; ui.skipTap = true;
+  try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
+});
+document.addEventListener("pointermove", e => {
+  const t = ui.drag, cv = $("#pcanvas"); if(!t || !cv) return;
+  const r = cv.getBoundingClientRect();
+  t.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); t.y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  ui.photo.out = null; drawPhoto();
+});
+const endDrag = () => { if(!ui.drag) return; ui.drag = null; setTimeout(() => { ui.skipTap = false; }, 350); };
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+document.addEventListener("touchstart", e => { if(e.target.id === "pcanvas" && e.touches[0] && tagAt(e.touches[0])) e.preventDefault(); }, {passive:false});
 function photoTap(e){
+  if(ui.skipTap){ ui.skipTap = false; return; }
   const ph = ui.photo, text = String(nextTag()).trim(); if(!ph) return;
   if(!text){ ph.msg = "Type what the tag should say first."; return render(); }
   const r = e.target.getBoundingClientRect();
@@ -1001,7 +1026,7 @@ function vPhotos(){
     </div>
     <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
       <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
-    <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."}</p>
+    <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} Drag any tag to move it.</p>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;cursor:crosshair;touch-action:manipulation" aria-label="Photo with labels. Tap to place the next tag."></canvas>
     <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><span class="note">${esc(ph.msg || "")}</span></div>
     ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
