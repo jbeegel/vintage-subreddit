@@ -244,7 +244,7 @@ Return JSON only: {"titles":["[FS] ...","[FS] ...","[FS] ..."],"intro":"..."}`;
 export function priceListPrompt(cards: unknown, groups: unknown, text: string, images: number): string {
   return `A seller is pricing the cards in a sale photo of vintage baseball cards from their own price list.
 
-Cards found in the photo, in reading order (top row first, left to right), with ids, position numbers, names and current asks in USD:
+Cards found in the photo (or in several photos of one page, each card marked with its photo number), in reading order (top row first, left to right), with ids, position numbers, names and current asks in USD:
 ${JSON.stringify(cards)}
 
 Lots already on the photo (one tag for several cards):

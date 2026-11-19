@@ -1318,15 +1318,16 @@ async function openPhoto(id){
   render();
 }
 const thumbUrl = x => ((ui.thumbs = ui.thumbs || {})[x.id] = ui.thumbs[x.id] || URL.createObjectURL(x.blob));
-async function loadPhoto(file){
+async function loadPhoto(file, quiet){
   try{
     const src = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(src.width, src.height)), w = Math.round(src.width * k), h = Math.round(src.height * k);
     const cv = document.createElement("canvas"); cv.width = w; cv.height = h; cv.getContext("2d").drawImage(src, 0, 0, w, h);
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
     ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, scale:Number(S.settings.tagScale) || 1, color:S.settings.tagColor || "white", tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     setPhotoTarget(""); /* no headline by default: a band across the top would cover the handwritten note */
-    ui.photo.ord = Date.now(); ui.photos = [...(ui.photos || []), ui.photo]; ui.photoErr = "";
-  }catch(e){ ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
+    ui.photo.ord = Date.now() + (ui.photos || []).length; ui.photos = [...(ui.photos || []), ui.photo]; ui.photoErr = "";
+  }catch(e){ if(quiet) return null; ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
+  if(quiet) return ui.photo;
   render();
 }
 function fitText(g, text, x, y, maxW, px, weight){
@@ -1415,14 +1416,14 @@ function vPhotos(){
   const ph = ui.photo, ts = photoTargets(), n = (ui.photos || []).length, have = S.cards.filter(c => !c.example && c.status !== "sold").length;
   const dk = (k, open) => `data-dk="${k}" ${(ui.dopen[k] ?? open) ? "open" : ""}`;
   return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
-    <p class="note">${have ? "Take the picture and tap Price every card. Cards already in your Review list get the asks you set there, and anything new gets an estimate you can check." : "Take the picture and tap Price every card. The tool finds each card, estimates an ask and adds it to Review, so a sale can start from a photo."} Then type any change, like "the bottom row is one lot at $40".</p>
-    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="${ph ? "small" : "primary"}" data-act="ppick">${n ? "Add another photo" : "Take or choose a photo"}</button>${n ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
+    <p class="note">${have ? "Take one picture or upload a batch. Tap Price every card. Cards already in your Review list get the asks you set there, and anything new gets an estimate you can check." : "Take the picture and tap Price every card. The tool finds each card, estimates an ask and adds it to Review, so a sale can start from a photo."} Then type any change, like "the bottom row is one lot at $40".</p>
+    <div class="row"><input type="file" id="pfile" accept="image/*" multiple hidden><button class="${ph ? "small" : "primary"}" data-act="ppick">${n ? "Add more photos" : "Take or choose photos"}</button>${n ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
-    ${n ? `<div class="row thumbs">${ui.photos.map((x, i) => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${i + 1}. ${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
+    ${n ? `${photoStrip()}
     ${n > 1 ? `<div class="row"><button class="small" data-act="pSaveAll" ${ui.busy ? "disabled" : ""}>Save all ${n} in order</button><button class="small" data-act="pSaveAllPlain" ${ui.busy ? "disabled" : ""}>Save all without labels</button></div>` : ""}
     <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
     ${ph ? `
-    <div class="row"><button class="${ph.cards ? "small" : "primary"}" data-act="pauto" ${ui.busy ? "disabled" : ""}>${ph.cards ? "Price every card again" : "Price every card"}</button>${ui.busy ? `<span class="progress busy">${esc(ui.busy)}</span>` : ""}</div>
+    <div class="row"><button class="${ph.cards ? "small" : "primary"}" data-act="pauto" ${ui.busy ? "disabled" : ""}>${ph.page ? (ph.cards ? "Price this page again" : `Price this page (${pagePhotos(ph).length} photos)`) : ph.cards ? "Price every card again" : "Price every card"}</button>${ph.page ? `<span class="chip">${esc(ph.page.name)} · photo ${pagePhotos(ph).indexOf(ph) + 1} of ${pagePhotos(ph).length}</span>` : ""}${ui.busy ? `<span class="progress busy">${esc(ui.busy)}</span>` : ""}</div>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;touch-action:manipulation" aria-label="Photo with price tags. Drag a tag to move it."></canvas>
     ${ph.applied === false && ph.cards && ph.cards.length ? `<div class="row">${applyBtn(ph)}<span class="note">Draft prices are faded. Nothing is final until you apply.</span></div>` : ""}
     ${photoSayBox(ph)}
@@ -1774,7 +1775,7 @@ async function autoPrice(){
     ph.groups = [...byLot].map(([lotId, ids], i) => ({id:"g" + i, ids, lotId, price:null, label:""}));
     ph.hidden = []; ph.selRefs = []; ph.hintSkip = []; ph.applied = false; ph.listResult = null; ph.undoSheet = null;
     relabel();
-    const matched = ph.cards.filter(pc => pc.invId).length, extra = photoExtra(ph), hadInv = pool.length > 0;
+    const matched = ph.cards.filter(pc => pc.invId).length, extra = photoExtra(ph), hadInv = pool.some(p => p.c.where !== "from a sale photo");
     if(extra.length && !hadInv) addFoundCards();
     ph.askAdd = extra.length > 0 && hadInv;
     ph.msg = !found.length ? "No cards were found in this photo." : [`Found ${plural(found.length, "card", "cards")}.`,
@@ -1787,7 +1788,10 @@ async function autoPrice(){
 function addFoundCards(){
   const ph = ui.photo, extra = photoExtra(ph); if(!extra.length) return "";
   if(S.cards.every(c => c.example)) S.cards = [];
+  const sib = pagePhotos(ph).filter(x => x !== ph).flatMap(x => x.cards || []).filter(x => x.invId && findCard(x.invId));
   for(const pc of extra){
+    const same = sib.find(x => String(x.name || "").toLowerCase() === String(pc.name || "").toLowerCase() && !ph.cards.some(y => y !== pc && y.invId === x.invId));
+    if(same){ pc.invId = same.invId; continue; }
     const f = pc.f || {}, fl = joinFlaws(flawList(f.flaws)), id = uid();
     S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null});
     pc.invId = id;
@@ -1823,15 +1827,18 @@ function priceComment(){
   let out = "";
   const pics = S.settings.commentByPhoto ? photosWithCards() : [];
   if(pics.length){
-    const done = new Set();
+    const done = new Set(), secs = new Map();
     pics.forEach((x, i) => {
       const cs = [...(x.cards || [])].filter(pc => pc.invId && !(x.hidden || []).includes(pc.id)).sort((a, b) => ((a.box.y0 + a.box.y1) - (b.box.y0 + b.box.y1)) || (a.box.x0 - b.box.x0));
       const rows = []; let cur = null;
       for(const pc of cs){ const yc = (pc.box.y0 + pc.box.y1) / 2, h = pc.box.y1 - pc.box.y0; if(!cur || yc - cur.yc > h * .5){ cur = {yc, list:[]}; rows.push(cur); } cur.list.push(pc); }
       const seq = [];
       rows.forEach(r => r.list.sort((a, b) => a.box.x0 - b.box.x0).forEach(pc => { const f = findCard(pc.invId); const top = f && (f.lot || f.c); if(top && inSale(top) && !done.has(top.id)){ done.add(top.id); seq.push(top); } }));
-      if(seq.length) out += `**Photo ${ui.photos.indexOf(x) + 1}**\n\n` + seq.map(block).join("") + "\n";
+      const key = x.page ? "pg:" + x.page.id : x.id;
+      if(!secs.has(key)) secs.set(key, {name:x.page ? x.page.name : "Photo " + (ui.photos.indexOf(x) + 1), seq:[]});
+      secs.get(key).seq.push(...seq);
     });
+    for(const v of secs.values()) if(v.seq.length) out += `**${v.name}**\n\n` + v.seq.map(block).join("") + "\n";
     const rest = items.filter(c => !done.has(c.id));
     if(rest.length) out += "**Other cards**\n\n" + rest.map(block).join("") + "\n";
   } else {
@@ -1928,7 +1935,7 @@ function copyBox(){
 
 /* ---------- photo order: numbered strip, move earlier or later, save every photo in order ---------- */
 function photoRecord(ph){
-  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied};
+  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied, page:ph.page || null};
 }
 const photosWithCards = () => (ui.photos || []).filter(x => (x.cards || []).some(pc => pc.invId));
 function movePhoto(d){
@@ -2051,13 +2058,21 @@ function skipNext(){ if(ui.nextKey) S.skipNext = {...(S.skipNext || {}), [ui.nex
 /* ---------- prices first: a draft price sheet, the seller's own list, then Apply puts it on the photo ---------- */
 function sheetRefs(ph){ return photoRows(ph).map(x => x.g ? "g:" + x.g.id : x.pc.id); }
 const refAsk = r => { const ph = ui.photo; if(r.startsWith("g:")){ const g = ph.groups.find(x => "g:" + x.id === r); return g ? groupAsk(g) : null; } return cardAsk(pcard(r) || {}); };
-function photoSnap(){ const ph = ui.photo; return {S:JSON.stringify(S), cards:JSON.stringify(ph.cards), groups:JSON.stringify(ph.groups), hidden:JSON.stringify(ph.hidden || [])}; }
-function photoRestore(snap){ const ph = ui.photo; if(!ph || !snap) return; S = merge(JSON.parse(snap.S)); ph.cards = JSON.parse(snap.cards); ph.groups = JSON.parse(snap.groups); ph.hidden = JSON.parse(snap.hidden); relabel(); }
-function bulkAdjust(pct){
+function photoSnap(){ return {S:JSON.stringify(S), photos:pagePhotos(ui.photo).map(x => ({id:x.id, cards:JSON.stringify(x.cards || null), groups:JSON.stringify(x.groups || []), hidden:JSON.stringify(x.hidden || [])}))}; }
+function photoRestore(snap){
+  if(!snap) return; S = merge(JSON.parse(snap.S)); const keep = ui.photo;
+  for(const p of snap.photos){ const x = (ui.photos || []).find(y => y.id === p.id); if(!x) continue; x.cards = JSON.parse(p.cards); x.groups = JSON.parse(p.groups); x.hidden = JSON.parse(p.hidden); ui.photo = x; if(x.cards) relabel(); idb("put", photoRecord(x)); }
+  ui.photo = keep;
+}
+async function bulkAdjust(pct){
   const ph = ui.photo; if(!ph || !ph.cards) return;
-  ph.undoSheet = photoSnap(); let n = 0;
-  for(const r of sheetRefs(ph)){ const a = refAsk(r); if(a != null){ photoPrice([r], roundP(a * (1 + pct / 100))); n++; } }
-  relabel(); ph.msg = `${pct > 0 ? "Raised" : "Lowered"} ${plural(n, "ask", "asks")} by ${Math.abs(pct)}%, rounded the usual way. Undo is in the price sheet.`;
+  const undo = photoSnap(); let n = 0;
+  const seen = new Set(); /* the same card on two photos of a page changes once */
+  await onPage(x => { if(!x.cards) return; for(const r of sheetRefs(x)){ const g = r.startsWith("g:") && x.groups.find(y => "g:" + y.id === r), pc = !g && pcard(r), key = g ? g.lotId || x.id + r : pc && pc.invId ? pc.invId : x.id + r; if(seen.has(key)) continue; seen.add(key); const a = refAsk(r); if(a != null){ photoPrice([r], roundP(a * (1 + pct / 100))); n++; } } relabel(); });
+  await onPage(x => { if(x.cards) relabel(); });
+  ph.undoSheet = undo; save();
+  ph.msg = `${pct > 0 ? "Raised" : "Lowered"} ${plural(n, "ask", "asks")} by ${Math.abs(pct)}%${ph.page ? " across " + ph.page.name : ""}, rounded the usual way. Undo is in the price sheet.`;
+  render();
 }
 async function priceList(files){
   const ph = ui.photo; if(!ph || !ph.cards) return;
@@ -2067,27 +2082,39 @@ async function priceList(files){
   ui.busy = "Matching your list to the cards"; render();
   try{
     const imgs = []; for(const f of (files || []).slice(0, 2)) imgs.push(await shrink(f));
-    const order = sheetRefs(ph), cards = [], images = imgs.length;
-    photoRows(ph).forEach((x, i) => { if(x.pc) cards.push({id:x.pc.id, pos:i + 1, row:x.row + 1, name:x.pc.invId && findCard(x.pc.invId) ? lineName(findCard(x.pc.invId).c) : x.pc.name, ask:cardAsk(x.pc)}); else x.g.ids.forEach(id => { const pc = pcard(id); if(pc) cards.push({id, pos:i + 1, row:x.row + 1, name:pc.name, ask:cardAsk(pc), inLot:x.g.id}); }); });
-    const groups = ph.groups.map(g => ({id:g.id, ids:g.ids, ask:groupAsk(g)}));
+    const undo = photoSnap(), changed = [], miss = [], keep = ph, list = pagePhotos(ph).filter(x => x.cards);
+    /* one call for the whole page: ids carry the photo's place in the page, "2:p4" */
+    const cards = [], groups = [], images = imgs.length;
+    for(const [pi, px] of list.entries()){
+      photoRows(px).forEach((x, i) => { if(x.pc) cards.push({id:pi + 1 + ":" + x.pc.id, photo:pi + 1, pos:i + 1, row:x.row + 1, name:x.pc.invId && findCard(x.pc.invId) ? lineName(findCard(x.pc.invId).c) : x.pc.name, ask:cardAsk(x.pc)}); else x.g.ids.forEach(id => { const pc = px.cards.find(c => c.id === id); if(pc) cards.push({id:pi + 1 + ":" + id, photo:pi + 1, pos:i + 1, row:x.row + 1, name:pc.name, ask:cardAsk(pc), inLot:pi + 1 + ":" + x.g.id}); }); });
+      px.groups.forEach(g => groups.push({id:pi + 1 + ":" + g.id, ids:g.ids.map(id => pi + 1 + ":" + id), ask:groupAsk(g)}));
+    }
     const r = (await ai("pricelist", {cards, groups, text}, imgs)) || {};
-    ph.undoSheet = photoSnap();
-    const changed = [];
+    const split = v => { const m = /^(\d+):(.+)$/.exec(String(v || "")); return m ? [list[Number(m[1]) - 1], m[2]] : [list[0], String(v || "")]; };
     for(const x of Array.isArray(r.prices) ? r.prices : []){
-      const id = String(x.id || ""), v = Number(x.price), ref = ph.groups.some(g => g.id === id) ? "g:" + id : id;
-      if(!(v > 0) || !order.includes(ref) && !pcard(id)) continue;
-      const was = refAsk(ref); photoPrice([ref], v); changed.push({line:String(x.line || ""), was, now:v});
+      const [px, id] = split(x.id), v = Number(x.price); if(!px || !(v > 0)) continue;
+      await usePhoto(px);
+      const ref = px.groups.some(g => g.id === id) ? "g:" + id : id;
+      if(!sheetRefs(px).includes(ref) && !pcard(id)) continue;
+      const was = refAsk(ref); photoPrice([ref], v); relabel();
+      changed.push({line:(list.length > 1 ? "Photo " + ((ui.photos || []).indexOf(px) + 1) + ": " : "") + String(x.line || ""), was, now:v});
     }
     for(const x of Array.isArray(r.groups) ? r.groups : []){
-      const ids = (Array.isArray(x.ids) ? x.ids : []).map(String).filter(id => pcard(id));
+      const parts = (Array.isArray(x.ids) ? x.ids : []).map(split), px = parts[0] && parts[0][0];
+      if(!px) continue;
+      await usePhoto(px);
+      const ids = parts.filter(q => q[0] === px).map(q => q[1]).filter(id => pcard(id));
       if(ids.length < 2) continue;
-      photoGroup(ids, Number(x.price), "", ""); changed.push({line:String(x.line || ""), was:null, now:Number(x.price) || null, lot:ids.length});
+      photoGroup(ids, Number(x.price), "", ""); relabel();
+      changed.push({line:String(x.line || ""), was:null, now:Number(x.price) || null, lot:ids.length});
     }
-    relabel(); save();
-    ph.listResult = {changed, unmatched:(Array.isArray(r.unmatched) ? r.unmatched : []).map(String).slice(0, 20), say:String(r.say || "")};
+    list.forEach(px => idb("put", photoRecord(px)));
+    ui.photo = keep; save(); ph.undoSheet = undo;
+    const unmatched = (Array.isArray(r.unmatched) ? r.unmatched : []).map(String), said = String(r.say || "");
+    ph.listResult = {changed, unmatched:unmatched.slice(0, 20), say:list.length > 1 ? `Matched across all ${list.length} photos of ${ph.page.name}. ${said}`.trim() : said};
     ph.msg = `Matched ${plural(changed.length, "line", "lines")} from your list${ph.listResult.unmatched.length ? `, ${ph.listResult.unmatched.length} did not match anything` : ""}. Check the price sheet, then apply.`;
     ui.listText = "";
-  }catch(e){ ph.msg = "The list could not be read: " + (e && (e.message || e.code) || "unknown error"); }
+  }catch(e){ ui.photo = ph; ph.msg = "The list could not be read: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
 }
 function listResultBox(ph){
@@ -2099,7 +2126,9 @@ function listResultBox(ph){
 }
 function sheetTools(ph){
   const refs = sheetRefs(ph), total = refs.reduce((a, r) => a + (refAsk(r) || 0), 0), none = refs.filter(r => refAsk(r) == null).length;
-  return `<p><strong>${plural(refs.length, "tag", "tags")}</strong> · <strong>${money(total) || "$0"}</strong> in all${none ? ` · <span class="chip warn">${none} without a price</span>` : ""}</p>
+  const pp = pagePhotos(ph).filter(x => x.cards && x !== ph), keep = ui.photo;
+  let pT = total, pN = refs.length; for(const x of pp){ ui.photo = x; const rs = sheetRefs(x); pN += rs.length; pT += rs.reduce((a, r) => a + (refAsk(r) || 0), 0); } ui.photo = keep;
+  return `<p><strong>${plural(refs.length, "tag", "tags")}</strong> · <strong>${money(total) || "$0"}</strong> on this photo${none ? ` · <span class="chip warn">${none} without a price</span>` : ""}${ph.page ? `<br><span class="note">${esc(ph.page.name)}: ${plural(pN, "tag", "tags")} · ${money(pT) || "$0"} across ${plural(pagePhotos(ph).length, "photo", "photos")}. Your list, the Everything buttons and Apply cover the whole page.</span>` : ""}</p>
     <div class="row"><span class="note">Everything:</span><button class="small" data-act="pBulk" data-p="-20">Down 20%</button><button class="small" data-act="pBulk" data-p="-10">Down 10%</button><button class="small" data-act="pBulk" data-p="10">Up 10%</button>${ph.undoSheet && !ph.listResult ? `<button class="small" data-act="pSheetUndo">Undo</button>` : ""}</div>
     <details class="more" ${(ui.dopen.plist ?? ph.applied === false) ? "open" : ""} data-dk="plist"><summary>Use my own price list</summary>
       <p class="note">Paste it in any format, or upload a photo of a handwritten or printed list. Each line is matched to its card, and lines like "Teds lot 35" become a lot.</p>
@@ -2107,7 +2136,73 @@ function sheetTools(ph){
       <div class="row"><button class="small primary" data-act="pListGo" ${ui.busy ? "disabled" : ""}>Match my list to the cards</button><input type="file" id="plistfile" accept="image/*" multiple hidden><button class="small" data-act="pListPick" ${ui.busy ? "disabled" : ""}>Upload a photo of my list</button></div></details>
     ${listResultBox(ph)}`;
 }
-const applyBtn = ph => ph.applied === false && ph.cards && ph.cards.length ? `<button class="primary" data-act="pApply">Put these prices on the photo</button>` : "";
+const applyBtn = ph => pagePhotos(ph).some(x => x.applied === false && x.cards && x.cards.length) ? `<button class="primary" data-act="pApply">${ph.page ? `Put these prices on ${pagePhotos(ph).length === 2 ? "both" : "all " + pagePhotos(ph).length} photos` : "Put these prices on the photo"}</button>` : "";
+
+/* ---------- many photos: a queue with a status each, and pages of photos handled as one ---------- */
+const pagePhotos = ph => ph && ph.page ? (ui.photos || []).filter(x => x.page && x.page.id === ph.page.id) : ph ? [ph] : [];
+const photoState = x => !x.cards ? "waiting" : x.applied === false ? "draft" : (x.tags || []).length ? "labeled" : "priced";
+async function usePhoto(x){ if(!x.bmp) x.bmp = await createImageBitmap(x.blob); ui.photo = x; }
+async function loadMany(files){
+  const before = (ui.photos || []).length, added = [];
+  ui.busy = `Adding ${plural(files.length, "photo", "photos")}`; render();
+  for(const f of files){ const x = await loadPhoto(f, true); if(x){ added.push(x); idb("put", photoRecord(x)); } }
+  ui.busy = "";
+  if(added.length){
+    ui.photo = added[0];
+    if(added.length > 1) added[0].msg = `Added ${plural(added.length, "photo", "photos")}. They wait in the strip above. Tap Price all waiting, or group some into one page first if they belong together.`;
+  }
+  if(!added.length && before === (ui.photos || []).length) ui.photoErr = "Those files could not be opened as photos.";
+  render();
+}
+async function runQueue(list, label){
+  list = list.filter(Boolean); if(!list.length) return;
+  if(!cap.ai){ if(ui.photo) ui.photo.msg = aiOff(); return render(); }
+  const first = list[0];
+  for(const [i, x] of list.entries()){
+    await usePhoto(x);
+    ui.queueNote = `${label || "Pricing photos"}: ${i + 1} of ${list.length}.`;
+    await autoPrice();
+    idb("put", photoRecord(x));
+  }
+  ui.queueNote = "";
+  await usePhoto(first);
+  if(list.length > 1) first.msg = `Priced ${plural(list.length, "photo", "photos")}. Each is a draft until you apply its prices. ${list.reduce((a, x) => a + (x.cards || []).length, 0)} cards found in all.` + (first.page ? " The price sheet, your price list and the Everything buttons work across the whole page." : " Open each one from the strip to check it.");
+  render();
+}
+async function onPage(fn){
+  const keep = ui.photo, list = pagePhotos(keep);
+  for(const x of list){ await usePhoto(x); await fn(x); idb("put", photoRecord(x)); }
+  ui.photo = keep;
+}
+function makePage(){
+  const picked = (ui.photos || []).filter(x => (ui.picked || []).includes(x.id)); if(picked.length < 2) return;
+  const n = new Set((ui.photos || []).filter(x => x.page).map(x => x.page.id)).size;
+  const page = {id:uid(), name:String(ui.pageName || "").trim().slice(0, 60) || "Page " + (n + 1)};
+  picked.forEach(x => { x.page = page; });
+  /* keep a page's photos next to each other, where its first photo was */
+  const out = []; let done = false;
+  for(const x of ui.photos){ if(picked.includes(x)){ if(!done){ out.push(...picked); done = true; } } else out.push(x); }
+  ui.photos = out; out.forEach((x, k) => { x.ord = k + 1; idb("put", photoRecord(x)); });
+  const t = picked.find(x => x.title || x.note); if(t) picked.forEach(x => { x.title = t.title; x.note = t.note; x.out = null; });
+  ui.picked = []; ui.pickPhotos = false; ui.pageName = "";
+  ui.photo = picked[0];
+  picked[0].msg = `${picked.length} photos are now "${page.name}". Price them together with Price this page; the price sheet, your price list, the Everything buttons, Apply and the headline work across all of them, and the price comment lists the page as one section.`;
+}
+function unPage(){
+  (ui.photos || []).filter(x => (ui.picked || []).includes(x.id)).forEach(x => { x.page = null; idb("put", photoRecord(x)); });
+  ui.picked = [];
+}
+function photoStrip(){
+  const list = ui.photos || [], n = list.length; if(!n) return "";
+  const st = list.map(photoState), waiting = st.filter(x => x === "waiting").length, drafts = st.filter(x => x === "draft").length, done = st.filter(x => x === "labeled").length, picked = ui.picked || [];
+  const lab = {waiting:"waiting", draft:"draft", labeled:"labeled", priced:"priced"};
+  return `<div class="row" style="justify-content:space-between"><span class="note">${[plural(n, "photo", "photos"), waiting ? waiting + " waiting" : "", drafts ? drafts + " in draft" : "", done ? done + " labeled" : ""].filter(Boolean).join(" · ")}${ui.queueNote ? " · " + esc(ui.queueNote) : ""}</span>
+      <span class="row" style="gap:6px">${waiting ? `<button class="small primary" data-act="pQueue" ${ui.busy ? "disabled" : ""}>Price all ${waiting} waiting</button>` : ""}${n > 1 ? `<button class="small" data-act="pPickMode">${ui.pickPhotos ? "Done" : "Group photos into a page"}</button>` : ""}</span></div>
+    <div class="row thumbs">${list.map((x, i) => { const s = st[i], pk = picked.includes(x.id);
+      return `<button class="thumb ${ui.photo && x.id === ui.photo.id && !ui.pickPhotos ? "on" : ""} ${pk ? "picked" : ""}" data-act="${ui.pickPhotos ? "pPickOne" : "popen"}" data-pid="${x.id}" aria-label="${ui.pickPhotos ? (pk ? "Unpick" : "Pick") : "Open"} photo ${i + 1}" ${ui.pickPhotos ? `aria-pressed="${pk}"` : ""}><img src="${thumbUrl(x)}" alt=""><span>${ui.pickPhotos ? (pk ? "✓ " : "") : ""}${i + 1}. ${esc(x.title || "Untitled")}</span><span class="chip ${s === "labeled" ? "ok" : s === "draft" ? "warn" : ""}">${lab[s]}</span>${x.page ? `<span class="pg">${esc(x.page.name)}</span>` : ""}</button>`; }).join("")}</div>
+    ${ui.pickPhotos ? `<div class="check rq"><span>Tap the photos that belong together, like a front and a close-up, or several shots of one price page. A page is priced and checked as one: shared headline, one price list, one section in the price comment.</span>
+      <div class="row"><input id="pagename" class="grow" value="${esc(ui.pageName || "")}" placeholder="Page name, like 1959 Fleer page or $10 per card"><button class="small primary" data-act="pMakePage" ${picked.length >= 2 ? "" : "disabled"}>Make ${picked.length >= 2 ? picked.length + " photos" : "them"} one page</button>${list.some(x => picked.includes(x.id) && x.page) ? `<button class="small" data-act="pUnpage">Take them off their page</button>` : ""}</div></div>` : ""}`;
+}
 
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
@@ -2195,9 +2290,14 @@ document.addEventListener("click", async e => {
   else if(act === "learn") return learnThread();
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
-  else if(act === "pauto") return autoPrice();
-  else if(act === "pApply" && ui.photo){ ui.photo.applied = true; ui.photo.out = null; ui.photo.msg = "The prices are on the photo. Drag any tag to move it, and keep changing prices or wording any time: the tags follow."; }
-  else if(act === "pBulk" && ui.photo) bulkAdjust(Number(el.dataset.p));
+  else if(act === "pauto") return ui.photo && ui.photo.page ? runQueue(pagePhotos(ui.photo), "Pricing " + ui.photo.page.name) : autoPrice();
+  else if(act === "pQueue") return runQueue((ui.photos || []).filter(x => !x.cards), "Pricing photos");
+  else if(act === "pPickMode"){ ui.pickPhotos = !ui.pickPhotos; ui.picked = []; }
+  else if(act === "pPickOne"){ const id = el.dataset.pid, p = ui.picked = ui.picked || []; const i = p.indexOf(id); if(i < 0) p.push(id); else p.splice(i, 1); return render(); }
+  else if(act === "pMakePage") makePage();
+  else if(act === "pUnpage") unPage();
+  else if(act === "pApply" && ui.photo){ const pp = pagePhotos(ui.photo); pp.forEach(x => { x.applied = true; x.out = null; if(x !== ui.photo) idb("put", photoRecord(x)); }); ui.photo.msg = (pp.length > 1 ? `The prices are on ${pp.length === 2 ? "both" : "all " + pp.length} photos of ${ui.photo.page.name}.` : "The prices are on the photo.") + " Drag any tag to move it, and keep changing prices or wording any time: the tags follow."; }
+  else if(act === "pBulk" && ui.photo) return bulkAdjust(Number(el.dataset.p));
   else if(act === "pSheetUndo" && ui.photo){ photoRestore(ui.photo.undoSheet); ui.photo.undoSheet = null; ui.photo.listResult = null; ui.photo.msg = "Undone."; }
   else if(act === "pListDone" && ui.photo){ ui.photo.listResult = null; }
   else if(act === "pListGo") return priceList([]);
@@ -2289,9 +2389,10 @@ document.addEventListener("change", e => {
   if(t.id === "pageprice"){ ui.pagePrice = t.value; return; }
   if(t.id === "plistfile"){ const fs = [...t.files]; t.value = ""; if(fs.length) priceList(fs); return; }
   if(t.id === "plisttext"){ ui.listText = t.value; return; }
-  if(t.id === "pfile"){ const f = t.files[0]; t.value = ""; if(f) loadPhoto(f); return; }
+  if(t.id === "pagename"){ ui.pageName = t.value; return; }
+  if(t.id === "pfile"){ const fs = [...t.files]; t.value = ""; if(fs.length > 1) loadMany(fs); else if(fs[0]) loadPhoto(fs[0]); return; }
   if(t.id === "ph-target" && ui.photo){ setPhotoTarget(t.value); return render(); }
-  if((t.id === "ph-title" || t.id === "ph-note") && ui.photo){ ui.photo[t.id.slice(3)] = t.value; ui.photo.out = null; return render(); }
+  if((t.id === "ph-title" || t.id === "ph-note") && ui.photo){ for(const x of pagePhotos(ui.photo)){ x[t.id.slice(3)] = t.value; x.out = null; if(x !== ui.photo) idb("put", photoRecord(x)); } return render(); }
   if(t.id === "ph-tag" && ui.photo){ ui.photo.tagText = t.value === (photoQueue()[ui.photo.qi] ?? "") ? null : t.value; return; }
   if(t.id === "backfile"){ const fs = [...t.files]; t.value = ""; if(fs.length && ui.backFor) queuePhotos(ui.backFor, fs); return; }
   if(t.id === "onecard"){ ui.oneCard = t.checked; return; }
@@ -2337,7 +2438,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
