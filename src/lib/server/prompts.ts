@@ -7,7 +7,7 @@ export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
     ? "frames from one video sweep across a table of cards, so the same physical card can appear in more than one image. List each physical card once."
     : tiled
       ? "non-overlapping crops cut from one large photo of many cards laid out for sale. A card on a crop edge shows up in two crops: list it only in the crop that holds more than half of it, and skip cards that are mostly cut off."
-      : "photos of cards laid out for sale. List every card visible in every photo.";
+      : "photos of cards laid out for sale. List every card visible in every photo. If a photo shows card backs, use them to confirm the fronts they belong to (number, name, condition of the back) and do not list a back as a separate card.";
   return `You are identifying vintage baseball cards (mostly pre-1981) for a seller preparing a sale post. The ${n} attached image(s) are ${what}
 
 Rules:

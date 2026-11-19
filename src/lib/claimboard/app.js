@@ -173,24 +173,26 @@ async function scan(files){
     const isVideo = files.length === 1 && files[0].type.startsWith("video/");
     let blobs = [], tiled = false;
     if(isVideo) blobs = await framesFromVideo(files[0], set);
-    else for(let i = 0; i < files.length; i++){ set(`Preparing photo ${i + 1} of ${files.length}`); const t = await tiles(files[i]); if(t.length > 1) tiled = true; blobs.push(...t); }
+    else for(let i = 0; i < files.length; i++){ set(`Preparing photo ${i + 1} of ${files.length}`); const t = ui.manyCards ? await tiles(files[i]) : [await shrink(files[i], 1568)]; if(t.length > 1) tiled = true; blobs.push(...t); }
     const per = 3; /* keeps each upload under the 4.5 MB request limit common on serverless hosts */
-    const found = [];
-    for(let i = 0; i < blobs.length; i += per){
-      const batch = blobs.slice(i, i + per);
-      set(`Identifying cards, batch ${i / per + 1} of ${Math.ceil(blobs.length / per)}`);
-      const r = await ai("scan", {video: isVideo, tiled}, batch);
-      for(const c of (r && r.cards) || []) found.push(c);
-    }
-    const seen = new Map(); let added = 0;
+    const batches = []; for(let i = 0; i < blobs.length; i += per) batches.push(blobs.slice(i, i + per));
+    const seen = new Map(), t0 = Date.now(); let added = 0, done = 0, next = 0;
     if(S.cards.every(c => c.example)) S.cards = [];
-    for(const c of found){
-      const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
-      if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-      S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
-      added++;
-    }
-    ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
+    const tick = () => { const secs = Math.round((Date.now() - t0) / 1000), left = done ? Math.max(0, Math.round((Date.now() - t0) / done * (batches.length - done) / Math.min(3, batches.length - done || 1) / 1000)) : 0;
+      set(`Identifying cards: ${done} of ${plural(batches.length, "batch", "batches")} done, ${plural(added, "card", "cards")} found so far · ${secs}s${done && done < batches.length ? `, about ${left}s left` : batches.length > 1 && !done ? ", the first results take about a minute" : ""}`); };
+    const timer = setInterval(tick, 1000); tick();
+    const take = r => {
+      for(const c of (r && r.cards) || []){
+        const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
+        if(isVideo && seen.has(key)) continue; seen.set(key, 1);
+        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
+        added++;
+      }
+    };
+    /* three requests at a time; each batch's cards show up in Review as soon as it finishes */
+    const worker = async () => { while(next < batches.length){ const batch = batches[next++]; const r = await ai("scan", {video: isVideo, tiled}, batch); take(r); done++; save(); render(); tick(); } };
+    try{ await Promise.all(Array.from({length:Math.min(3, batches.length)}, worker)); } finally { clearInterval(timer); }
+    ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"} in ${plural(Math.max(1, Math.round((Date.now() - t0) / 1000)), "second", "seconds")}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
     save();
   }catch(e){
     const code = e && e.code;
@@ -214,6 +216,7 @@ function vInventory(){
       <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Take or choose photos</button>
       <button class="small" data-act="add">Add a card by hand</button>
       <label class="inline"><input type="checkbox" id="onecard" ${ui.oneCard ? "checked" : ""}> These photos are all one card</label>
+      <label class="inline"><input type="checkbox" id="manycards" ${ui.manyCards ? "checked" : ""}> 20 or more cards in one shot (slower: cuts the photo up so small cards read better)</label>
     </div>
     ${ui.busy || ui.scanMsg || !any ? `<p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works. Shoot straight down at full resolution, without glare. A short video works too.")}</p>` : ""}
   </div>
@@ -2876,6 +2879,7 @@ document.addEventListener("change", e => {
   if(t.id === "ph-tag" && ui.photo){ ui.photo.tagText = t.value === (photoQueue()[ui.photo.qi] ?? "") ? null : t.value; return; }
   if(t.id === "backfile"){ const fs = [...t.files]; t.value = ""; if(fs.length && ui.backFor) queuePhotos(ui.backFor, fs); return; }
   if(t.id === "onecard"){ ui.oneCard = t.checked; return; }
+  if(t.id === "manycards"){ ui.manyCards = t.checked; return; }
   if(t.dataset.gp){ ui.grpPrice[t.dataset.gp] = t.value; return; }
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
