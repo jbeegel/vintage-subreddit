@@ -1575,6 +1575,7 @@ function progressBar(){
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
   return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog">${goalLine()}<ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
     <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button><button class="small danger" data-act="startOver">Start over</button></span></div>
+    <div class="row" style="gap:6px"><button class="small" data-act="exportMd">Download for ChatGPT (.md)</button><button class="small" data-act="importOpen">Import prices</button></div>
     ${skipped ? `<p class="note">${plural(skipped, "step is", "steps are")} set aside. <button class="small" data-act="nextBack">Bring ${skipped === 1 ? "it" : "them"} back</button></p>` : `<p class="note">Disagree? Say so in the box below, for example "skip the price check, I priced these from my own comps".</p>`}</div>`;
 }
 
@@ -2932,6 +2933,86 @@ function viewerBox(){
   </div></div>`;
 }
 
+/* ---------- export for a second opinion, and import its prices back ---------- */
+function cardMd(c, L, depth){
+  const h = "#".repeat(depth), v = c.aiLow != null && c.aiHigh != null ? `${money(c.aiLow)} to ${money(c.aiHigh)}` : "";
+  L.push(`${h} ${c.isLot ? c.player : title(c)}  (ID ${c.id})`, "");
+  L.push(`- Ask: **${money(priceOf(c)) || "no price yet"}** (${askSource(c)})${c.tagText ? `, tag reads "${c.tagText}"` : ""}`);
+  if(c.status !== "open") L.push(`- Status: ${c.status}${c.claimBy ? " by u/" + c.claimBy : ""}${c.soldPrice ? " at " + money(c.soldPrice) : ""}`);
+  if(c.isLot){
+    L.push(`- Cards: ${lotN(c)}${c.unique ? `, ${c.unique} different` : ""}; ${c.members.length} listed${c.splitOk ? "; cards also sold one at a time" : "; sold as a lot only"}`);
+    L.push(`- Condition: ${lotCond(c)}`);
+    const lh = lotHobbyText(c); if(lh) L.push(`- Hobby notes: ${lh}`);
+    if(c.lotEval) L.push(`- Lot analysis: ${money(c.lotEval.price) || "no price"}${c.lotEval.low && c.lotEval.high ? ` (likely ${money(c.lotEval.low)} to ${money(c.lotEval.high)})` : ""}. ${c.lotEval.why} ${c.lotEval.breakdown.map(b => b.label + (b.amount != null ? " " + money(b.amount) : "")).join("; ")}`.trim());
+    if(c.inv){ const s = invInfo(c); if(s) L.push(`- Card-number inventory: ${s.total} cards, ${s.unique} different, numbers ${s.nums.join(", ")}`); }
+    L.push("", "| ID | Card | Grade | Condition | Value range | Ask |", "|---|---|---|---|---|---|");
+    c.members.forEach(m => L.push(`| ${m.id} | ${lineName(m)}${hobbyShort(m) ? " (" + hobbyShort(m) + ")" : ""} | ${m.grade || ""} | ${(m.flaws || "").replace(/\|/g, "/")} | ${m.aiLow != null && m.aiHigh != null ? money(m.aiLow) + "-" + money(m.aiHigh) : ""} | ${money(priceOf(m)) || ""} |`));
+  } else {
+    L.push(`- Grade: ${c.grade || "not recorded"}`, `- Condition notes: ${c.flaws || "none recorded"}`);
+    if((c.condLog || []).length) L.push(`- Condition record: ${condHistory(c).join(" | ")}`);
+    if(c.ctxNote) L.push(`- Seller's context: ${c.ctxNote}`);
+    if(v) L.push(`- Value range from the scan, for this condition: ${v}${c.valueWhy ? ". " + c.valueWhy : ""} (an AI estimate, not a sold comp)`);
+    if(c.comp != null) L.push(`- Sold comp the seller entered: ${money(c.comp)}`);
+    const hb = hobbyFor(c); if(hb.length) L.push(`- Hobby notes: ${hb.map(x => x.t).join(" ")}`);
+    histWhy(c).forEach(([k, t]) => L.push(`- ${k}: ${t}`));
+  }
+  const r = S.priceCheck && S.priceCheck.items[c.id];
+  if(r) L.push(`- Price check (${dshort(S.priceCheck.at)}): ${r.verdict}${Number(r.suggest) > 0 ? ", suggested " + money(Number(r.suggest)) : ""}. ${r.why || ""} ${(r.evidence || []).map(e => [e.source, e.price != null ? money(Number(e.price)) : "", e.note, e.url].filter(Boolean).join(" ")).join("; ")}`.trim());
+  L.push("");
+}
+function saleMd(){
+  const st = S.settings, all = ordered().filter(c => !c.example), placed = all.filter(inSale), loose = all.filter(c => !inSale(c));
+  const total = placed.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0), L = [];
+  L.push("# Reddit card sale: pricing review", "", `Exported ${new Date().toLocaleString()} from the Reddit Sales Tool for a sale on r/baseballcards_vintage. Asks there are firm: buyers claim at the asking price, there are no offers and no platform fees.`, "");
+  L.push("## What I want from you", "", "Cross-check these prices against recent sold prices for each card in its stated condition, and against how singles, price pages and year lots actually sell on the sub. Weigh the condition notes and my own context: many asks were set on purpose from condition I can see in hand.", "",
+    "Reply with a markdown table with exactly these columns, one row for each ask you would change, and copy each ID exactly as written. A lot has its own ID; cards inside a lot have theirs.", "", "| ID | New ask | Reason |", "|---|---|---|", "| (card ID) | 45 | one short sentence |", "", "Only change prices. Do not add, remove or regroup cards.", "");
+  L.push("## The sale", "", `- My plan: ${S.goal || "none written"}`, `- Single asks sit about ${st.discount}% under value or sold comps; lots about ${st.lotDiscount ?? 10}% under their cards' total before any lot analysis`, `- ${plural(placed.length, "item", "items")} placed, ${plural(cardTotal(placed), "card", "cards")}, ${money(total) || "$0"} asking${numOrNull(st.takeAll) ? `; take-everything price ${money(numOrNull(st.takeAll))}` : ""}`, `- Payment: ${st.pay || ""}. Shipping: ${st.ship || ""}`);
+  const ins = insights(); if(ins.length) L.push(`- From my past sales: ${ins.join("; ")}`);
+  L.push("");
+  for(const s of [...new Set(placed.map(c => c.section || "Other cards"))]){ L.push(`## ${s}`, ""); placed.filter(c => (c.section || "Other cards") === s).forEach(c => cardMd(c, L, 3)); }
+  if(loose.length){ L.push("## Not placed yet", ""); loose.forEach(c => cardMd(c, L, 3)); }
+  const f = factsFor("plan"); if(f) L.push("## Reference notes from the tool", "", ...f.split("\n").map(x => "- " + x), "");
+  return L.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+async function downloadMd(){
+  const name = `reddit-sale-${new Date().toISOString().slice(0, 10)}.md`, file = new File([saleMd()], name, {type:"text/markdown"});
+  try{
+    const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    ui.cmdMsg = `Downloaded ${name}. Upload it to ChatGPT or any assistant, then bring its answer back with Import prices.`;
+  }catch(e){ ui.cmdMsg = "The file could not be saved here: " + (e && e.message || "unknown error"); }
+  render();
+}
+function parseImport(text){
+  const ids = new Map();
+  allCards().forEach(x => ids.set(x.c.id, x.c)); S.cards.filter(c => c.isLot && !c.example).forEach(l => ids.set(l.id, l));
+  text = String(text || "");
+  try{ const j = JSON.parse(text); const arr = Array.isArray(j) ? j : Array.isArray(j.items) ? j.items : []; if(arr.length) text = arr.map(x => `${x.id || x.ID} ${x.ask ?? x.newAsk ?? x.price ?? x["New ask"]} ${x.reason || ""}`).join("\n"); }catch(e){}
+  const out = [], seen = new Set();
+  for(const line of text.split(/\n/)){
+    const id = [...ids.keys()].find(k => new RegExp("(^|[^A-Za-z0-9])" + k + "([^A-Za-z0-9]|$)").test(line)); if(!id || seen.has(id)) continue;
+    let price = null, reason = "";
+    if(line.includes("|")){ const cells = line.split("|").map(x => x.trim()).filter(Boolean), i = cells.findIndex(x => x.includes(id)), rest = cells.slice(i + 1), k = rest.findIndex(x => /\d/.test(x)); if(k >= 0){ price = Number((/\d+(?:\.\d+)?/.exec(rest[k].replace(/,/g, "")) || [])[0]); reason = rest.slice(k + 1).join(" "); } }
+    else { const after = line.slice(line.indexOf(id) + id.length), m = /\$?\s*(\d+(?:\.\d+)?)/.exec(after.replace(/,/g, "")); if(m){ price = Number(m[1]); reason = after.slice(m.index + m[0].length).replace(/^[\s:;,.)\-]+/, ""); } }
+    if(!(price > 0)) continue;
+    const c = ids.get(id), old = priceOf(c); seen.add(id);
+    out.push({id, name:c.isLot ? c.player : title(c), old, neu:price, reason:reason.slice(0, 240), on:old !== price});
+  }
+  return out;
+}
+function importPanel(){
+  if(!ui.importOpen) return "";
+  const rows = ui.importRows, on = rows ? rows.filter(r => r.on).length : 0;
+  return `<div class="panel pick" id="importpanel"><div class="row" style="justify-content:space-between"><h2>Import prices</h2><button class="small" data-act="importClose">Close</button></div>
+    <p class="note">Paste the answer you got back, or open the file. Only asks change: cards, condition, groupings and lots stay as they are. You see every change first.</p>
+    ${rows ? `${rows.length ? `<div class="bar pcbar"><strong>${on} of ${rows.length} ticked</strong><button class="small" data-act="impAll">Tick all</button><button class="small" data-act="impNone">Untick all</button><button class="small primary" data-act="impApply" ${on ? "" : "disabled"}>Apply ${plural(on, "price", "prices")}</button></div>
+      <ul class="cards">${rows.map((r, i) => `<li><div class="pickrow"><input type="checkbox" data-imp="${i}" ${r.on ? "checked" : ""} aria-label="Tick ${esc(r.name)}"><div><div class="ttl">${esc(r.name)}</div><div class="meta">${money(r.old) || "no price"} → <strong>${money(r.neu)}</strong>${r.old === r.neu ? " (same)" : ""}${r.reason ? ". " + esc(r.reason) : ""}</div></div></div>
+        <div class="nums"><label>Use<input class="money" data-impv="${i}" inputmode="decimal" value="${r.neu}"></label></div></li>`).join("")}</ul>` : `<p class="flag">No prices matched. The answer needs each card's ID from the file next to a price, like a table row "| abc1234 | 45 | reason |".</p>`}
+      <div class="row"><button class="small" data-act="importAgain">Paste something else</button></div>`
+    : `<textarea id="importtext" style="min-height:140px" placeholder="| ID | New ask | Reason |&#10;| abc1234 | 45 | VG copies sold near $55 |">${esc(ui.importText || "")}</textarea>
+      <div class="row"><button class="small primary" data-act="importRead">Read the prices</button><input type="file" id="importfile" accept=".md,.txt,.csv,.json,text/plain,text/markdown,text/csv,application/json" hidden><button class="small" data-act="importPick">Open a file</button></div>`}
+  </div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2941,7 +3022,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + viewerBox() + goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
+  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + viewerBox() + goalPanel() + progressBar() + clearPanel() + importPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
   stat(); buildJump();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -3020,6 +3101,19 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "exportMd") return downloadMd();
+  else if(act === "importOpen"){ ui.importOpen = true; ui.importRows = null; go(location.hash || "#inventory", () => { const t = $("#importpanel"); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
+  else if(act === "importClose"){ ui.importOpen = false; ui.importRows = null; }
+  else if(act === "importAgain"){ ui.importRows = null; }
+  else if(act === "importPick") return $("#importfile").click();
+  else if(act === "importRead"){ ui.importRows = parseImport(ui.importText); }
+  else if(act === "impAll"){ (ui.importRows || []).forEach(r => { r.on = true; }); }
+  else if(act === "impNone"){ (ui.importRows || []).forEach(r => { r.on = false; }); }
+  else if(act === "impApply"){
+    ui.undo = JSON.stringify(S); let n = 0;
+    for(const r of (ui.importRows || []).filter(r => r.on && r.neu > 0)){ const f = findCard(r.id); if(!f) continue; f.c.price = r.neu; if(f.c.isLot) f.c.fixed = true; if(f.lot) relot(f.lot); n++; }
+    ui.importOpen = false; ui.importRows = null; ui.cmdMsg = `Applied ${plural(n, "imported price", "imported prices")}. Undo is in the bar at the top.`;
+  }
   else if(act === "viewCard") return openCard(el.dataset.cid);
   else if(act === "viewClose"){ if(ui.viewer && ui.viewer.url) URL.revokeObjectURL(ui.viewer.url); ui.viewer = null; ui.viewMsg = ""; }
   else if(act === "viewRecheck" && ui.viewer && ui.viewer.blob){ const id = ui.viewer.id, f = findCard(id); if(f){ if(f.c.ctxNote) logCond(f.c, "you", "", "context: " + f.c.ctxNote); ui.rq[id] = {blobs:[await shrink(ui.viewer.blob, 1568)], urls:[], note:f.c.ctxNote || "", msg:""}; await recheck(id); const g = findCard(id); ui.viewMsg = g ? g.c.backMsg || "Rechecked." : "Rechecked."; dropRq(id); } }
@@ -3200,6 +3294,10 @@ document.addEventListener("change", e => {
   if(t.id === "acq"){ ui.acQ = t.value; ui.dopen.allcards = true; return render(); }
   if(t.dataset.pcsel){ ui.pcOff = ui.pcOff || new Set(); if(t.checked) ui.pcOff.delete(t.dataset.pcsel); else ui.pcOff.add(t.dataset.pcsel); return render(); }
   if(t.id === "viewnote" && ui.viewer){ const f = findCard(ui.viewer.id); if(f){ f.c.ctxNote = t.value.trim(); save(); } return; }
+  if(t.id === "importtext"){ ui.importText = t.value; return; }
+  if(t.id === "importfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.importText = x.slice(0, 400000); ui.importRows = parseImport(ui.importText); render(); }); return; }
+  if(t.dataset.imp && ui.importRows){ const r = ui.importRows[+t.dataset.imp]; if(r) r.on = t.checked; return render(); }
+  if(t.dataset.impv && ui.importRows){ const r = ui.importRows[+t.dataset.impv], v = numOrNull(t.value); if(r && v > 0){ r.neu = v; r.on = true; } return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
@@ -3247,7 +3345,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "ovtext") ui.ovText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "importtext") ui.importText = e.target.value; else if(e.target.id === "ovtext") ui.ovText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
