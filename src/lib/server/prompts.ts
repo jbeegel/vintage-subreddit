@@ -186,7 +186,9 @@ Turn that into changes to the photo's tags.
 - Asks are firm on this subreddit; do not suggest room for offers.
 
 Operations:
-- {"op":"group","ids":["p12","p13"],"price":160,"label":"1959 Fleer Ted Williams lot"}  make these cards one lot with one tag. Leave out "price" to price it from the cards. "label" is optional.
+- {"op":"group","ids":["p12","p13"],"price":160,"label":"1959 Fleer Ted Williams lot","tag":"All 6 for $160"}  make these cards one lot with one tag. Leave out "price" to price it from the cards. "label" is optional.
+- Every "group" may carry "tag": the exact words the seller wants on the lot's tag, for example "All 6 for $160", "$35 total" or "$50 shipped". Use it whenever the seller words the price.
+- {"op":"tag","ids":["g0"],"text":"$50 shipped"}  change the words on existing tags. An empty text goes back to the plain ask.
 - {"op":"ungroup","ids":["g0"]}  split lots back into single tags.
 - {"op":"price","ids":["p3"],"price":25}  set the ask for cards or lots.
 - {"op":"hide","ids":["p4"]}  no tag for these cards (not for sale).

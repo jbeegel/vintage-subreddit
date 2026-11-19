@@ -1215,8 +1215,8 @@ function photoTargets(){
   for(const s of [...new Set(rows.map(c => c.section || ""))]){
     const list = rows.filter(c => (c.section || "") === s && c.status === "open"); if(!list.length) continue;
     const page = list.every(c => c.pin === "page"), name = s || "Cards for sale";
-    out.push({key:"s:" + s, label:name + " (" + list.length + ")", title:page ? name.toUpperCase() : name, note:page ? list.length + " cards. Claim by number." : "Numbers match the price list.", queue:list.map(c => "#" + num(c) + (page ? "" : " " + money(priceOf(c))))});
-    for(const c of list) if(c.isLot) out.push({key:"l:" + c.id, label:"Lot: " + c.player, title:c.player, note:money(priceOf(c)) + " for the lot · #" + num(c) + " on the price list", queue:[]});
+    out.push({key:"s:" + s, label:name + " (" + list.length + ")", title:page ? name.toUpperCase() : name, note:page ? list.length + " cards. Claim by name in the comments." : "", queue:page ? [] : list.map(c => c.isLot ? lotTagText(c, priceOf(c)) : c.tagText || money(priceOf(c)))});
+    for(const c of list) if(c.isLot) out.push({key:"l:" + c.id, label:"Lot: " + c.player, title:c.player, note:lotTagText(c, priceOf(c)), queue:[]});
   }
   return out;
 }
@@ -1315,7 +1315,7 @@ function tagAt(pt){
 document.addEventListener("pointerdown", e => {
   if(e.target.id !== "pcanvas") return;
   const t = tagAt(e); if(!t) return;
-  if(ui.photoSelect){ if(t.ref){ const ph = ui.photo; ph.selRefs = ph.selRefs || []; const i = ph.selRefs.indexOf(t.ref); if(i < 0) ph.selRefs.push(t.ref); else ph.selRefs.splice(i, 1); ui.photoAsk = null; } ui.skipTap = true; render(); return; }
+  if(ui.photoSelect){ if(t.ref){ const ph = ui.photo; ph.selRefs = ph.selRefs || []; const i = ph.selRefs.indexOf(t.ref); if(i < 0) ph.selRefs.push(t.ref); else ph.selRefs.splice(i, 1); ui.photoAsk = null; ui.photoText = null; } ui.skipTap = true; render(); return; }
   ui.drag = t; ui.skipTap = true;
   try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
 });
@@ -1412,7 +1412,7 @@ function vSale(){
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
-    <div class="row"><a class="btn primary" href="#post">Build the post</a>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
+    <div class="row"><a class="btn primary" href="#post">Build the post</a><button class="small" data-act="goComment">Price comment</button>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
     ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
       return `<div class="panel"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
       : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
@@ -1509,14 +1509,14 @@ function relabel(){
   const inGroup = new Set(ph.groups.flatMap(g => g.ids)), hidden = new Set(ph.hidden || []), items = [];
   for(const pc of ph.cards){
     if(inGroup.has(pc.id) || hidden.has(pc.id)) continue;
-    const a = cardAsk(pc), n = cardNum(pc);
-    items.push({ref:pc.id, box:pc.box, text:(n ? "#" + n + " " : "") + (a != null ? money(a) : "ask?")});
+    const a = cardAsk(pc), f = pc.invId && findCard(pc.invId);
+    items.push({ref:pc.id, box:pc.box, text:pc.text || (f && f.c.tagText) || (a != null ? money(a) : "ask?")});
   }
   for(const g of ph.groups){
     const bs = g.ids.map(pcard).filter(Boolean).map(c => c.box); if(!bs.length) continue;
     const box = {x0:Math.min(...bs.map(b => b.x0)), y0:Math.min(...bs.map(b => b.y0)), x1:Math.max(...bs.map(b => b.x1)), y1:Math.max(...bs.map(b => b.y1))};
-    const lot = groupLot(g), n = lot ? saleNum(lot) : 0, a = groupAsk(g);
-    items.push({ref:"g:" + g.id, box, text:(n ? "#" + n + " " : "") + "Lot" + (a != null ? " " + money(a) : "")});
+    const lot = groupLot(g), a = groupAsk(g);
+    items.push({ref:"g:" + g.id, box, text:g.text || (lot && lot.tagText) || "All " + g.ids.length + " for " + (a != null ? money(a) : "ask?")});
   }
   ph.tags = layoutTags(items); ph.qi = photoQueue().length; ph.tagText = null; ph.out = null;
 }
@@ -1531,19 +1531,30 @@ function mirrorGroup(g){
   if(inv.length < 2 || !inv.every(i => { const f = i && findCard(i); return f && !f.lot && f.c.status === "open"; })) return false;
   const name = g.label || lotNameFor(inv.map(i => findCard(i).c));
   if(!applyOps([{op:"lot", name, ids:inv, price:g.price > 0 ? g.price : undefined, section:"Lots"}])) return false;
-  const lot = S.cards[S.cards.length - 1]; lot.why = "You made this lot on a sale photo."; g.lotId = lot.id;
+  const lot = S.cards[S.cards.length - 1]; lot.why = "You made this lot on a sale photo."; g.lotId = lot.id; if(g.text) lot.tagText = g.text;
   return true;
 }
-function photoGroup(ids, price, label){
+function photoGroup(ids, price, label, text){
   const ph = ui.photo;
   ids = [...new Set(ids)].filter(id => pcard(id));
   if(ids.length < 2) return "Pick at least two cards for a lot.";
   ph.groups = ph.groups.filter(g => !g.ids.some(id => ids.includes(id)) || (g.ids = g.ids.filter(id => !ids.includes(id))).length >= 2);
   ph.hidden = (ph.hidden || []).filter(id => !ids.includes(id));
-  const g = {id:uid(), ids, price:price > 0 ? price : null, label:label || lotNameFor(ids.map(id => pcard(id).f || {})), lotId:null};
+  const g = {id:uid(), ids, price:price > 0 ? price : null, label:label || lotNameFor(ids.map(id => pcard(id).f || {})), lotId:null, text:""};
   ph.groups.push(g);
   const inSaleToo = mirrorGroup(g);
+  if(text) photoText(["g:" + g.id], text);
   return `${plural(ids.length, "card is", "cards are")} now one lot${groupAsk(g) != null ? " at " + money(groupAsk(g)) : ""}.` + (inSaleToo ? " It is on the Sale tab too." : " It is on this photo only. Tap Add the new cards to Review and it becomes a lot in your sale as well.");
+}
+function photoText(refs, text){
+  text = String(text || "").trim().slice(0, 40); let n = 0;
+  for(const r of refs){
+    const g = ui.photo.groups.find(x => "g:" + x.id === r || x.id === r);
+    if(g){ g.text = text; const lot = groupLot(g); if(lot) lot.tagText = text; n++; continue; }
+    const pc = pcard(r); if(!pc) continue;
+    pc.text = text; const f = pc.invId && findCard(pc.invId); if(f && !f.lot) f.c.tagText = text; n++;
+  }
+  return n ? (text ? `Tag wording set to "${text}". The price comment uses it too.` : "Tag wording reset to the plain ask.") : "";
 }
 function photoUngroup(gids){
   const ph = ui.photo; let n = 0;
@@ -1560,9 +1571,9 @@ function photoPrice(ids, price){
   let n = 0;
   for(const id of ids){
     const g = ui.photo.groups.find(x => x.id === id || "g:" + x.id === id);
-    if(g){ g.price = price; const lot = groupLot(g); if(lot){ lot.price = price; lot.fixed = true; } n++; continue; }
+    if(g){ g.price = price; g.text = ""; const lot = groupLot(g); if(lot){ lot.price = price; lot.fixed = true; lot.tagText = ""; } n++; continue; }
     const pc = pcard(id); if(!pc) continue;
-    pc.price = price; const f = pc.invId && findCard(pc.invId); if(f && !f.lot) f.c.price = price; n++;
+    pc.price = price; pc.text = ""; const f = pc.invId && findCard(pc.invId); if(f && !f.lot){ f.c.price = price; f.c.tagText = ""; } n++;
   }
   return n ? `Set the ask to ${money(price)} on ${plural(n, "tag", "tags")}.` : "";
 }
@@ -1577,7 +1588,8 @@ function photoEditBox(ph){
     <div class="row"><label class="inline"><input type="checkbox" id="pselmode" ${ui.photoSelect ? "checked" : ""}> Select tags by tapping</label>${sel.length ? `<strong>${sel.length} selected</strong><button class="small" data-act="pSelNone">Clear</button>` : ""}</div>
     ${sel.length ? `<div class="row"><label class="inline">Ask $<input class="money" id="paskval" inputmode="decimal" value="${esc(val)}"></label>
       <button class="small primary" data-act="pCombine" ${ids.length >= 2 ? "" : "disabled"}>Combine into one lot</button>
-      <button class="small" data-act="pSetAsk">Set ask</button>${selGroups().length ? `<button class="small" data-act="pSplit">Split lot</button>` : ""}<button class="small danger" data-act="pHide">Remove tag</button></div>` : ""}
+      <button class="small" data-act="pSetAsk">Set ask</button></div>
+      <div class="row"><label class="inline grow">Tag says <input id="ptagtext" class="grow" value="${esc(ui.photoText ?? (sel.length === 1 ? ((ph.tags.find(t => t.ref === sel[0]) || {}).text || "") : ""))}" placeholder="All 6 for $160, $35 total, $50 shipped"></label><button class="small" data-act="pSetText">Set wording</button>${selGroups().length ? `<button class="small" data-act="pSplit">Split lot</button>` : ""}<button class="small danger" data-act="pHide">Remove tag</button></div>` : ""}
     <div class="row"><input id="pinstr" class="grow" value="${esc(ui.photoInstr || "")}" placeholder="The bottom row of Teds is one lot at $160"><button class="small primary" data-act="pInstr" ${ui.busy ? "disabled" : ""}>Do it</button></div>
     ${(ph.hidden || []).length ? `<div class="row"><button class="small" data-act="pShowAll">Bring back ${plural(ph.hidden.length, "removed tag", "removed tags")}</button></div>` : ""}
   </div>`;
@@ -1593,7 +1605,8 @@ async function photoInstr(){
     const r = (await ai("phototag", {text, cards, groups})) || {}, said = [];
     for(const o of Array.isArray(r.ops) ? r.ops : []){
       const ids = Array.isArray(o.ids) ? o.ids.map(String) : [];
-      if(o.op === "group") said.push(photoGroup(ids, Number(o.price), o.label ? String(o.label) : ""));
+      if(o.op === "group") said.push(photoGroup(ids, Number(o.price), o.label ? String(o.label) : "", o.tag ? String(o.tag) : ""));
+      else if(o.op === "tag") said.push(photoText(ids.map(id => ph.groups.some(g => g.id === id) ? "g:" + id : id), String(o.text || "")));
       else if(o.op === "ungroup") said.push(photoUngroup(ids));
       else if(o.op === "price") said.push(photoPrice(ids, Number(o.price)));
       else if(o.op === "hide"){ ph.hidden = [...new Set([...(ph.hidden || []), ...ids.filter(id => pcard(id))])]; ph.groups.forEach(g => { g.ids = g.ids.filter(id => !ids.includes(id)); }); }
@@ -1671,8 +1684,48 @@ function addFoundCards(){
   return `Added ${plural(extra.length, "card", "cards")} from the photo to Review.` + (made ? ` ${plural(made, "lot", "lots")} from this photo ${made === 1 ? "was" : "were"} made in your sale too.` : "");
 }
 
+/* ---------- the Reddit price comment: the sale in order, one line per card, lots listed card by card ---------- */
+function condShort(c){
+  const g = String(c.grade || "").replace(/^raw\s+/i, ""), parts = flawParts(c);
+  const pick = [...parts.filter(x => ISSUE.test(x)), ...parts.filter(x => !ISSUE.test(x))].slice(0, 2).map(x => x.replace(/\s*\([^)]*\)/g, "").trim().replace(/^./, ch => ch.toLowerCase()));
+  return [g, ...pick].filter(Boolean).join(", ");
+}
+const lineName = c => [c.year, c.set, c.num ? "#" + c.num : "", c.player, c.variation ? "(" + c.variation + ")" : ""].filter(Boolean).join(" ");
+const lotTagText = (c, a) => c.tagText || "All " + c.members.length + " for " + (a != null ? money(a) : "a price to come");
+function priceComment(){
+  const st = S.settings, items = ordered().filter(inSale), secs = [...new Set(items.map(c => c.section || "Other cards"))];
+  const strike = (t, c) => c.status === "sold" ? "~~" + t + "~~ **SOLD**" : c.status === "claimed" ? t + " (pending)" : t;
+  let out = "";
+  for(const s of secs){
+    out += `**${s}**\n\n`;
+    const list = items.filter(c => (c.section || "Other cards") === s);
+    for(const c of list){
+      const a = priceOf(c);
+      if(!c.isLot){ out += "- " + strike(`${lineName(c)}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n"; continue; }
+      const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
+      out += "\n" + strike(`**${name}, ${n} cards - ${lotTagText(c, a)}**`, c) + "\n\n";
+      for(const m of c.members) out += `- ${lineName(m)}${condShort(m) ? " - " + condShort(m) : ""}\n`;
+      const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
+      out += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
+        ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
+        : "No creases, writing or paper loss that I can see.") + "\n\n";
+    }
+    out += "\n";
+  }
+  out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted on every line and already priced in. Ask for more photos of anything before you claim.\n`;
+  return out.replace(/\n{3,}/g, "\n\n");
+}
+function commentPanel(){
+  if(!S.cards.some(inSale)) return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2><p class="note">Nothing is in the sale yet. Place cards on the Review tab, and the comment builds itself here.</p></div>`;
+  return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2>
+    <p class="note">The whole sale in order: year, set, number and name, a short condition summary and the ask. Lots list every card, their grades and any issues. It updates whenever the sale changes.</p>
+    <textarea id="out-comment" readonly style="min-height:320px">${esc(priceComment())}</textarea>
+    <div class="row"><button class="primary" data-copy="out-comment">Copy price comment</button></div></div>`;
+}
+const vPostAll = () => vPost().replace(/<\/section>\s*$/, commentPanel() + "</section>");
+
 /* ---------- render + events ---------- */
-const VIEWS = {inventory:vInventory, sale:vSale, post:vPost, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
+const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
   const name = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "inventory";
   document.querySelectorAll("#nav a").forEach(a => a.getAttribute("href") === "#" + name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
@@ -1691,7 +1744,7 @@ addEventListener("hashchange", render);
 document.addEventListener("click", async e => {
   if(e.target.id === "pcanvas") return photoTap(e);
   const cp = e.target.closest("[data-copy]");
-  if(cp && cp.dataset.copy === "out-body" && !S.postedAt){ S.postedAt = Date.now(); save(); }
+  if(cp && (cp.dataset.copy === "out-body" || cp.dataset.copy === "out-comment") && !S.postedAt){ S.postedAt = Date.now(); save(); }
   if(cp){ const ta = $("#" + cp.dataset.copy); try{ await navigator.clipboard.writeText(ta.value); cp.textContent = "Copied"; }catch(_){ ta.focus(); ta.select(); cp.textContent = "Selected, press copy"; } return; }
   const el = e.target.closest("[data-act]"); if(!el) return;
   const act = el.dataset.act, li = el.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id);
@@ -1758,7 +1811,9 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "pauto") return autoPrice();
-  else if(act === "pSelNone"){ ui.photo.selRefs = []; ui.photoAsk = null; }
+  else if(act === "goComment") return go("#post", () => { const d = document.getElementById("pricecomment"); if(d) d.scrollIntoView({behavior:"smooth"}); });
+  else if(act === "pSetText"){ ui.photo.msg = photoText(ui.photo.selRefs || [], String(ui.photoText ?? $("#ptagtext").value)); ui.photo.selRefs = []; ui.photoText = null; relabel(); }
+  else if(act === "pSelNone"){ ui.photo.selRefs = []; ui.photoAsk = null; ui.photoText = null; }
   else if(act === "pCombine"){ ui.photo.msg = photoGroup(selIds(), numOrNull(ui.photoAsk ?? $("#paskval").value), ""); ui.photo.selRefs = []; ui.photoAsk = null; relabel(); }
   else if(act === "pSetAsk"){ ui.photo.msg = photoPrice(ui.photo.selRefs || [], numOrNull(ui.photoAsk ?? $("#paskval").value)); ui.photo.selRefs = []; ui.photoAsk = null; relabel(); }
   else if(act === "pSplit"){ ui.photo.msg = photoUngroup(selGroups()); ui.photo.selRefs = []; relabel(); }
@@ -1827,6 +1882,7 @@ document.addEventListener("change", e => {
   if(t.id === "pselmode"){ ui.photoSelect = t.checked; if(!t.checked && ui.photo) ui.photo.selRefs = []; return render(); }
   if(t.id === "paskval"){ ui.photoAsk = t.value; return; }
   if(t.id === "pinstr"){ ui.photoInstr = t.value; return; }
+  if(t.id === "ptagtext"){ ui.photoText = t.value; return; }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
@@ -1858,7 +1914,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; });
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }
