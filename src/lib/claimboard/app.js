@@ -44,6 +44,7 @@ function pushCloud(){
   writing = writing.then(() => api("/api/state", {method:"PUT", json:{state: snapshot, updatedAt: at}})).then(() => { ui.cloudMsg = "Backed up to your account " + tm(at); stat(); }, () => { ui.dirty = true; ui.cloudMsg = "Account backup failed. It will retry on your next change"; stat(); });
   if(S.settings.share) writing = writing.then(() => api("/api/solds", {method:"PUT", json:{items: S.solds.map(({year,set,num,player,grade,price,date}) => ({year,set,num,player,grade,price,date}))}})).catch(() => {});
 }
+function saleDeleted(id){ /* finished sales travel inside the saved state */ }
 function saleSaved(sale){ /* finished sales travel inside the saved state */ }
 addEventListener("pagehide", pushCloud);
 document.addEventListener("visibilitychange", () => { if(document.hidden) pushCloud(); });
@@ -226,7 +227,7 @@ function vInventory(){
       <label class="inline">Price <input class="money" id="set-discount" type="number" min="0" max="60" value="${esc(S.settings.discount)}" style="width:60px">% under comp</label>
     </div>
     <p class="note">Each card shows a rough raw value for its condition and a suggested Reddit ask, which is that value less your discount. Tick cards to sell them as singles, bundle them into a year lot, or put them on a per-card price page. A sold comp or a typed ask replaces the estimate.</p>
-    <div class="row"><button class="small" data-act="selAll">Select all open cards</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}</div>
+    <div class="row"><button class="small" data-act="selAll">${S.cards.length && S.cards.every(x => ui.sel.has(x.id)) ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}</div>
     <ul class="cards">${ordered().map(rowInv).join("") || `<li><span class="note">Nothing yet. Scan a table or add a row.</span></li>`}</ul>
     ${selBar()}
   </div></section>`;
@@ -234,12 +235,13 @@ function vInventory(){
 function rowInv(c){
   const low = (c.conf ?? 1) < .75, p = priceOf(c), mid = c.aiLow != null && c.aiHigh != null ? Math.round((c.aiLow + c.aiHigh) / 2) : null;
   return `<li data-id="${c.id}">
-    <div class="pickrow">${c.status === "open" && !c.isLot ? `<input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}>` : ""}<div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
+    <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
       <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}${c.where ? " · " + esc(c.where) : ""}</div>
       ${valueLine(c)}${histLine(c)}</div></div>
     <div class="nums">
       <label>Sold comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label>
       <label>Reddit ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
+      <button class="small danger" data-act="del" aria-label="Delete ${esc(title(c))}">Delete</button>
     </div>
     <div class="links">
       ${c.isLot ? `<span class="chip ok">lot of ${c.members.length}</span><button class="small" data-act="unlot">Break lot apart</button>` : ""}
@@ -251,8 +253,7 @@ function rowInv(c){
     ${flawBox(c)}
     ${whyBox(c)}
     <details class="edit"><summary>Edit details</summary><div class="fields">
-      ${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}
-      <button class="small" data-act="del">Remove row</button></div></details>
+      ${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}</div></details>
   </li>`;
 }
 
@@ -483,12 +484,13 @@ function assignYearLots(){
   return [made ? made + " year lot" + (made === 1 ? "" : "s") + " built." : "", alone ? alone + " card" + (alone === 1 ? " has" : "s have") + " no other selected card from the same year and set, so " + (alone === 1 ? "it was" : "they were") + " left alone." : ""].filter(Boolean).join(" ");
 }
 function selBar(){
-  const n = selected().length;
-  if(!n) return ui.selMsg ? `<p class="note">${esc(ui.selMsg)}</p>` : "";
-  return `<div class="bar"><strong>${n} selected</strong>
-    <button class="small" data-act="asSingles">Sell as singles</button>
-    <button class="small" data-act="asYearLot">Put in a year lot</button>
-    <span class="row" style="gap:6px"><button class="small" data-act="asPage">Put on a page at</button><span>$</span><input class="money" id="pageprice" inputmode="decimal" value="${esc(ui.pagePrice)}" aria-label="Price per card"><span>per card</span></span>
+  const n = selected().length, all = S.cards.filter(c => ui.sel.has(c.id)).length, off = n ? "" : "disabled";
+  if(!all) return ui.selMsg ? `<p class="note">${esc(ui.selMsg)}</p>` : "";
+  return `<div class="bar"><strong>${all} selected</strong>
+    <button class="small danger" data-act="delSel">Delete</button>
+    <button class="small" data-act="asSingles" ${off}>Sell as singles</button>
+    <button class="small" data-act="asYearLot" ${off}>Put in a year lot</button>
+    <span class="row" style="gap:6px"><button class="small" data-act="asPage" ${off}>Put on a page at</button><span>$</span><input class="money" id="pageprice" inputmode="decimal" value="${esc(ui.pagePrice)}" aria-label="Price per card"><span>per card</span></span>
   </div>`;
 }
 
@@ -669,13 +671,13 @@ function historyPanels(){
     <div class="row"><button class="primary" data-act="closeSale">Close out the current sale</button><span class="note">${esc(ui.histMsg || "")}</span></div>
     ${ins.length ? `<h3>What your sales show</h3><p>${ins.map(esc).join(" · ")}</p>` : ""}
     ${sales.map(s => { const sold = s.items.filter(i => i.sold != null); return `<details class="edit"><summary>${esc(dshort(s.date))} · ${esc(s.name)} · ${sold.length} of ${s.items.length} sold · ${money(sold.reduce((a, i) => a + i.sold, 0)) || "$0"}</summary>
-      <div class="scroll"><table><thead><tr><th>Item</th><th>Sold as</th><th class="num">Ask</th><th class="num">Sold</th></tr></thead><tbody>${s.items.map(i => `<tr><td>${esc(i.t)}</td><td>${esc(i.section || i.kind)}</td><td class="num">${money(i.ask)}</td><td class="num">${i.sold != null ? money(i.sold) : "unsold"}</td></tr>`).join("")}</tbody></table></div></details>`; }).join("") || `<p class="note">No finished sales yet.</p>`}
+      <div class="scroll"><table><thead><tr><th>Item</th><th>Sold as</th><th class="num">Ask</th><th class="num">Sold</th></tr></thead><tbody>${s.items.map(i => `<tr><td>${esc(i.t)}</td><td>${esc(i.section || i.kind)}</td><td class="num">${money(i.ask)}</td><td class="num">${i.sold != null ? money(i.sold) : "unsold"}</td></tr>`).join("")}</tbody></table></div><div class="row" style="padding-top:8px"><button class="small danger" data-act="delSale" data-sid="${s.id}">Delete this record</button></div></details>`; }).join("") || `<p class="note">No finished sales yet.</p>`}
   </div>
   <div class="panel"><h2>Sub sales you have read</h2>
     <p class="note">Paste the text of any sale thread from the sub, price list and comments included. The tool pulls out each card, its price and whether it sold, and shows them as reference notes on your matching cards. They stay private to you and usernames are not kept.</p>
     <textarea id="subtext" placeholder="Paste a sale post and its comments here"></textarea>
     <div class="row"><button class="primary" data-act="learn" ${ui.busy ? "disabled" : ""}>Add to my reference</button><span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.learnMsg || "")}</span></div>
-    ${subs.length ? `<p class="note">${subs.length} prices collected, ${subs.filter(s => s.sold).length} marked sold. The search box below filters this list too.</p>
+    ${subs.length ? `<p class="note">${subs.length} prices collected, ${subs.filter(s => s.sold).length} marked sold. The search box below filters this list too. <button class="small danger" data-act="clearSubs">Clear them all</button></p>
       <div class="scroll"><table><thead><tr><th>Card</th><th>Grade</th><th class="num">Price</th><th>Result</th></tr></thead><tbody>${subs.filter(hit).slice(0, 150).map(r => `<tr><td>${esc(title(r))}</td><td>${esc(r.grade)}</td><td class="num">${money(r.price)}</td><td>${r.sold ? "sold" : "listed"}</td></tr>`).join("")}</tbody></table></div>` : ""}
   </div>`;
 }
@@ -1216,9 +1218,17 @@ document.addEventListener("click", async e => {
   e.preventDefault();
   if(act === "add"){ if(S.cards.every(x => x.example)) S.cards = []; S.cards.push({id:uid(), status:"open", year:"", set:"", num:"", player:"New card", grade:"", flaws:"", conf:1, comp:null, price:null}); }
   else if(act === "clearEx"){ S.cards = S.cards.filter(x => !x.example); }
-  else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
+  else if(act === "del" && c){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => x !== c); ui.sel.delete(c.id); ui.cmdMsg = "Deleted " + title(c) + ". Undo brings it back."; }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "delSel"){
+    const gone = S.cards.filter(x => ui.sel.has(x.id));
+    if(gone.length){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => !ui.sel.has(x.id)); ui.selMsg = ""; ui.cmdMsg = `Deleted ${gone.length} item${gone.length === 1 ? "" : "s"}. Undo brings ${gone.length === 1 ? "it" : "them"} back.`; }
+    ui.sel.clear();
+  }
+  else if(act === "delSale"){ ui.undo = JSON.stringify(S); S.sales = (S.sales || []).filter(x => x.id !== el.dataset.sid); saleDeleted(el.dataset.sid); ui.cmdMsg = "Deleted that finished sale. Undo brings it back."; }
+  else if(act === "clearSubs"){ ui.undo = JSON.stringify(S); S.subComps = []; ui.cmdMsg = "Cleared the collected sub prices. Undo brings them back."; }
+  else if(act === "delSold"){ ui.undo = JSON.stringify(S); S.solds = S.solds.filter((x, i) => String(i) !== el.dataset.i); ui.cmdMsg = "Deleted that sold-log entry. Undo brings it back."; }
   else if(act === "closeSale"){ ui.histMsg = closeSale(); }
   else if(act === "learn") return learnThread();
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
@@ -1237,7 +1247,7 @@ document.addEventListener("click", async e => {
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
   else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
-  else if(act === "selAll"){ S.cards.forEach(x => { if(x.status === "open" && !x.isLot) ui.sel.add(x.id); }); return render(); }
+  else if(act === "selAll"){ S.cards.forEach(x => ui.sel.add(x.id)); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
   else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
     ui.selMsg = act === "asSingles" ? assignSingles() : act === "asYearLot" ? assignYearLots() : assignPage(numOrNull(ui.pagePrice));
