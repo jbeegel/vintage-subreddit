@@ -1247,7 +1247,7 @@ function idb(op, arg){
 function keepPhoto(){
   const ph = ui.photo; if(!ph || !ph.blob) return;
   clearTimeout(ui.photoT);
-  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text, s}) => ({x, y, text, s}))}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
+  ui.photoT = setTimeout(() => idb("put", {id:ph.id, at:ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:ph.tags.map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null}).then(ok => { if(ui.photoKept !== !!ok){ ui.photoKept = !!ok; if(location.hash === "#photos" && !ui.drag) render(); } }), 300);
 }
 async function loadPhotos(){
   const all = await idb("all");
@@ -1297,7 +1297,8 @@ function drawPhoto(){
     const s = t.s || 3, k = s / 3;
     g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
     const w = g.measureText(t.text).width + 1.8 * u * k, h = 4.6 * u * k, x = Math.min(ph.w - w, Math.max(0, t.x * ph.w - w / 2)), y = Math.min(ph.h - h, Math.max(0, t.y * ph.h - h / 2));
-    g.fillStyle = "#fff"; g.strokeStyle = "#0a120f"; g.lineWidth = .35 * u * k;
+    const on = t.ref && (ph.selRefs || []).includes(t.ref);
+    g.fillStyle = on ? "#dff3fb" : "#fff"; g.strokeStyle = on ? "#0073a2" : "#0a120f"; g.lineWidth = (on ? .7 : .35) * u * k;
     t.box = {x, y, w, h};
     g.beginPath(); g.roundRect(x, y, w, h, .8 * u * k); g.fill(); g.stroke();
     g.fillStyle = "#0a120f"; g.fillText(t.text, x + .9 * u * k, y + .9 * u * k);
@@ -1314,6 +1315,7 @@ function tagAt(pt){
 document.addEventListener("pointerdown", e => {
   if(e.target.id !== "pcanvas") return;
   const t = tagAt(e); if(!t) return;
+  if(ui.photoSelect){ if(t.ref){ const ph = ui.photo; ph.selRefs = ph.selRefs || []; const i = ph.selRefs.indexOf(t.ref); if(i < 0) ph.selRefs.push(t.ref); else ph.selRefs.splice(i, 1); ui.photoAsk = null; } ui.skipTap = true; render(); return; }
   ui.drag = t; ui.skipTap = true;
   try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
 });
@@ -1329,6 +1331,7 @@ document.addEventListener("pointercancel", endDrag);
 document.addEventListener("touchstart", e => { if(e.target.id === "pcanvas" && e.touches[0] && tagAt(e.touches[0])) e.preventDefault(); }, {passive:false});
 function photoTap(e){
   if(ui.skipTap){ ui.skipTap = false; return; }
+  if(ui.photoSelect) return;
   const ph = ui.photo, text = String(nextTag()).trim(); if(!ph) return;
   if(!text){ ph.msg = "Type what the tag should say first."; return render(); }
   const r = e.target.getBoundingClientRect();
@@ -1362,7 +1365,8 @@ function vPhotos(){
       <label>Headline<input id="ph-title" value="${esc(ph.title)}" placeholder="$10 PER CARD"></label>
       <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
     </div>
-    <div class="row"><button class="primary" data-act="pauto" ${ui.busy ? "disabled" : ""}>Price every card automatically</button>${(ph.found || []).length ? `<button class="small" data-act="pfoundAdd">Add the ${ph.found.length} new card${ph.found.length === 1 ? "" : "s"} to Review</button>` : ""}<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || "Finds every card, matches it to your inventory and puts its ask under it.")}</span></div>
+    <div class="row"><button class="primary" data-act="pauto" ${ui.busy ? "disabled" : ""}>Price every card automatically</button>${photoExtra(ph).length ? `<button class="small" data-act="pfoundAdd">Add the ${photoExtra(ph).length} new card${photoExtra(ph).length === 1 ? "" : "s"} to Review</button>` : ""}<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || "Finds every card, matches it to your inventory and puts its ask under it.")}</span></div>
+    ${photoEditBox(ph)}
     <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
       <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
     <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} Drag any tag to move it.</p>
@@ -1485,6 +1489,122 @@ async function clearChosen(){
   return "Cleared " + done.join(", ") + "." + (done.length === 1 && p.photos ? "" : " Undo brings it back" + (p.photos ? ", except photos." : "."));
 }
 
+/* ---------- photo tags as data: each found card, the lots on the photo, and what is hidden ---------- */
+const pcard = id => (ui.photo.cards || []).find(c => c.id === id);
+const lotDisc = () => 1 - Number(S.settings.lotDiscount ?? 10) / 100;
+const photoExtra = ph => (ph && ph.cards || []).filter(pc => !pc.invId && !(ph.hidden || []).includes(pc.id));
+function saleNum(c){ const rows = ordered().filter(x => priceOf(x) != null || x.status !== "open"); return rows.indexOf(c) + 1; }
+function cardAsk(pc){ if(pc.price != null) return pc.price; const f = pc.invId && findCard(pc.invId); return f ? priceOf(f.c) : pc.est; }
+function cardNum(pc){ const f = pc.invId && findCard(pc.invId); return f && !f.lot ? saleNum(f.c) : 0; }
+const groupLot = g => g.lotId ? S.cards.find(c => c.id === g.lotId && c.isLot) : null;
+function groupAsk(g){
+  if(g.price != null) return g.price;
+  const lot = groupLot(g); if(lot) return priceOf(lot);
+  const asks = g.ids.map(id => pcard(id)).filter(Boolean).map(cardAsk);
+  return asks.length && asks.every(a => a != null) ? roundP(asks.reduce((a, b) => a + b, 0) * lotDisc()) : null;
+}
+function relabel(){
+  const ph = ui.photo; if(!ph || !ph.cards) return;
+  ph.groups = (ph.groups || []).filter(g => g.ids.length >= 2);
+  const inGroup = new Set(ph.groups.flatMap(g => g.ids)), hidden = new Set(ph.hidden || []), items = [];
+  for(const pc of ph.cards){
+    if(inGroup.has(pc.id) || hidden.has(pc.id)) continue;
+    const a = cardAsk(pc), n = cardNum(pc);
+    items.push({ref:pc.id, box:pc.box, text:(n ? "#" + n + " " : "") + (a != null ? money(a) : "ask?")});
+  }
+  for(const g of ph.groups){
+    const bs = g.ids.map(pcard).filter(Boolean).map(c => c.box); if(!bs.length) continue;
+    const box = {x0:Math.min(...bs.map(b => b.x0)), y0:Math.min(...bs.map(b => b.y0)), x1:Math.max(...bs.map(b => b.x1)), y1:Math.max(...bs.map(b => b.y1))};
+    const lot = groupLot(g), n = lot ? saleNum(lot) : 0, a = groupAsk(g);
+    items.push({ref:"g:" + g.id, box, text:(n ? "#" + n + " " : "") + "Lot" + (a != null ? " " + money(a) : "")});
+  }
+  ph.tags = layoutTags(items); ph.qi = photoQueue().length; ph.tagText = null; ph.out = null;
+}
+function lotNameFor(list){
+  const same = f => list.every(c => String(c[f] ?? "").toLowerCase() === String(list[0][f] ?? "").toLowerCase()) && list[0][f];
+  return same("year") && same("set") ? `${list[0].year} ${list[0].set} lot` : same("player") ? `${list[0].player} lot` : same("year") ? `${list[0].year} lot` : "Lot";
+}
+/* make the inventory lot too, when every card is a loose card in the inventory */
+function mirrorGroup(g){
+  if(g.lotId && groupLot(g)) return true;
+  const inv = g.ids.map(id => (pcard(id) || {}).invId);
+  if(inv.length < 2 || !inv.every(i => { const f = i && findCard(i); return f && !f.lot && f.c.status === "open"; })) return false;
+  const name = g.label || lotNameFor(inv.map(i => findCard(i).c));
+  if(!applyOps([{op:"lot", name, ids:inv, price:g.price > 0 ? g.price : undefined, section:"Lots"}])) return false;
+  const lot = S.cards[S.cards.length - 1]; lot.why = "You made this lot on a sale photo."; g.lotId = lot.id;
+  return true;
+}
+function photoGroup(ids, price, label){
+  const ph = ui.photo;
+  ids = [...new Set(ids)].filter(id => pcard(id));
+  if(ids.length < 2) return "Pick at least two cards for a lot.";
+  ph.groups = ph.groups.filter(g => !g.ids.some(id => ids.includes(id)) || (g.ids = g.ids.filter(id => !ids.includes(id))).length >= 2);
+  ph.hidden = (ph.hidden || []).filter(id => !ids.includes(id));
+  const g = {id:uid(), ids, price:price > 0 ? price : null, label:label || lotNameFor(ids.map(id => pcard(id).f || {})), lotId:null};
+  ph.groups.push(g);
+  const inSaleToo = mirrorGroup(g);
+  return `${plural(ids.length, "card is", "cards are")} now one lot${groupAsk(g) != null ? " at " + money(groupAsk(g)) : ""}.` + (inSaleToo ? " It is on the Sale tab too." : " It is on this photo only. Tap Add the new cards to Review and it becomes a lot in your sale as well.");
+}
+function photoUngroup(gids){
+  const ph = ui.photo; let n = 0;
+  for(const gid of gids){
+    const g = ph.groups.find(x => x.id === gid); if(!g) continue;
+    const lot = groupLot(g);
+    if(lot && lot.status === "open"){ const i = S.cards.indexOf(lot); lot.members.forEach(m => { detach(m); delete m.section; }); S.cards.splice(i, 1, ...lot.members); }
+    ph.groups = ph.groups.filter(x => x !== g); n++;
+  }
+  return n ? `Split ${plural(n, "lot", "lots")} back into single tags. Those cards are back on Review.` : "";
+}
+function photoPrice(ids, price){
+  if(!(price > 0)) return "Type an ask first.";
+  let n = 0;
+  for(const id of ids){
+    const g = ui.photo.groups.find(x => x.id === id || "g:" + x.id === id);
+    if(g){ g.price = price; const lot = groupLot(g); if(lot){ lot.price = price; lot.fixed = true; } n++; continue; }
+    const pc = pcard(id); if(!pc) continue;
+    pc.price = price; const f = pc.invId && findCard(pc.invId); if(f && !f.lot) f.c.price = price; n++;
+  }
+  return n ? `Set the ask to ${money(price)} on ${plural(n, "tag", "tags")}.` : "";
+}
+const selIds = () => { const ph = ui.photo; return (ph.selRefs || []).flatMap(r => r.startsWith("g:") ? (ph.groups.find(g => "g:" + g.id === r) || {ids:[]}).ids : [r]); };
+const selGroups = () => (ui.photo.selRefs || []).filter(r => r.startsWith("g:")).map(r => r.slice(2));
+function photoEditBox(ph){
+  if(!ph.cards || !ph.cards.length) return "";
+  const sel = ph.selRefs || [], ids = selIds(), asks = ids.map(id => cardAsk(pcard(id) || {}));
+  const suggest = sel.length === 1 ? (sel[0].startsWith("g:") ? groupAsk(ph.groups.find(g => "g:" + g.id === sel[0]) || {ids:[]}) : cardAsk(pcard(sel[0]) || {})) : asks.length && asks.every(a => a != null) ? roundP(asks.reduce((a, b) => a + b, 0) * lotDisc()) : null;
+  const val = ui.photoAsk ?? (suggest ?? "");
+  return `<div class="check rq"><span><strong>Change the tags.</strong> Turn on Select, tap tags, then combine them into one lot, set an ask, split a lot or remove a tag. Or say it, for example "the bottom row of Teds is one lot at $160".</span>
+    <div class="row"><label class="inline"><input type="checkbox" id="pselmode" ${ui.photoSelect ? "checked" : ""}> Select tags by tapping</label>${sel.length ? `<strong>${sel.length} selected</strong><button class="small" data-act="pSelNone">Clear</button>` : ""}</div>
+    ${sel.length ? `<div class="row"><label class="inline">Ask $<input class="money" id="paskval" inputmode="decimal" value="${esc(val)}"></label>
+      <button class="small primary" data-act="pCombine" ${ids.length >= 2 ? "" : "disabled"}>Combine into one lot</button>
+      <button class="small" data-act="pSetAsk">Set ask</button>${selGroups().length ? `<button class="small" data-act="pSplit">Split lot</button>` : ""}<button class="small danger" data-act="pHide">Remove tag</button></div>` : ""}
+    <div class="row"><input id="pinstr" class="grow" value="${esc(ui.photoInstr || "")}" placeholder="The bottom row of Teds is one lot at $160"><button class="small primary" data-act="pInstr" ${ui.busy ? "disabled" : ""}>Do it</button></div>
+    ${(ph.hidden || []).length ? `<div class="row"><button class="small" data-act="pShowAll">Bring back ${plural(ph.hidden.length, "removed tag", "removed tags")}</button></div>` : ""}
+  </div>`;
+}
+async function photoInstr(){
+  const ph = ui.photo, text = String(ui.photoInstr || "").trim(); if(!ph || !text) return;
+  if(!cap.ai){ ph.msg = aiOff(); return render(); }
+  ui.busy = "Working on it"; render();
+  try{
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const cards = ph.cards.map(pc => ({id:pc.id, name:pc.name, box:{x0:r3(pc.box.x0), y0:r3(pc.box.y0), x1:r3(pc.box.x1), y1:r3(pc.box.y1)}, ask:cardAsk(pc), hidden:(ph.hidden || []).includes(pc.id) || undefined}));
+    const groups = ph.groups.map(g => ({id:g.id, ids:g.ids, ask:groupAsk(g)}));
+    const r = (await ai("phototag", {text, cards, groups})) || {}, said = [];
+    for(const o of Array.isArray(r.ops) ? r.ops : []){
+      const ids = Array.isArray(o.ids) ? o.ids.map(String) : [];
+      if(o.op === "group") said.push(photoGroup(ids, Number(o.price), o.label ? String(o.label) : ""));
+      else if(o.op === "ungroup") said.push(photoUngroup(ids));
+      else if(o.op === "price") said.push(photoPrice(ids, Number(o.price)));
+      else if(o.op === "hide"){ ph.hidden = [...new Set([...(ph.hidden || []), ...ids.filter(id => pcard(id))])]; ph.groups.forEach(g => { g.ids = g.ids.filter(id => !ids.includes(id)); }); }
+      else if(o.op === "show") ph.hidden = (ph.hidden || []).filter(id => !ids.includes(id));
+    }
+    ph.selRefs = []; ui.photoInstr = ""; ui.photoAsk = null; relabel(); save();
+    ph.msg = (r.say ? String(r.say) + " " : "") + said.filter(Boolean).join(" ");
+  }catch(e){ ph.msg = "That did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+
 /* ---------- auto-price a photo: find each card, match it to the inventory, size and place a tag under it ---------- */
 function layoutTags(items){
   const ph = ui.photo, u = Math.max(ph.w, ph.h) / 100, g = document.createElement("canvas").getContext("2d"), placed = [], out = [];
@@ -1503,7 +1623,7 @@ function layoutTags(items){
     const score = (t, k) => { const ar = t.w * t.h; return placed.reduce((a, p) => a + area(p, t), 0) / ar * 100 + others.reduce((a, o) => a + area(o, t), 0) / ar * 8 + k * .6 + (k >= 4 ? 1.5 : 0); };
     const r = tries.map((t, k) => [t, score(t, k)]).sort((x, y) => x[1] - y[1])[0][0];
     placed.push(r);
-    out.push({x:(r.x + m.w / 2) / ph.w, y:(r.y + m.h / 2) / ph.h, text:it.text, s});
+    out.push({x:(r.x + m.w / 2) / ph.w, y:(r.y + m.h / 2) / ph.h, text:it.text, s, ref:it.ref});
   }
   return out;
 }
@@ -1515,7 +1635,6 @@ async function autoPrice(){
     const img = await shrink(ph.blob);
     const r = (await ai("locate", {}, [img])) || {};
     const found = (Array.isArray(r.cards) ? r.cards : []).filter(f => f && f.box && f.box.x1 > f.box.x0 && f.box.y1 > f.box.y0);
-    const rows = ordered().filter(c => priceOf(c) != null || c.status !== "open"), num = c => rows.indexOf(c) + 1;
     const norm = v => String(v ?? "").trim().toLowerCase(), used = new Set(), pool = [];
     S.cards.forEach(c => { if(c.isLot) c.members.forEach(m => pool.push({c:m, lot:c})); else pool.push({c}); });
     const match = f => {
@@ -1524,37 +1643,32 @@ async function autoPrice(){
       if(best) used.add(best.c.id);
       return best;
     };
-    const groups = new Map(), items = [], extra = [], disc = Number(S.settings.discount) || 0;
-    for(const f of found){
-      const m = match(f);
-      if(m && m.lot){ const gr = groups.get(m.lot.id) || {lot:m.lot, boxes:[]}; gr.boxes.push(f.box); groups.set(m.lot.id, gr); continue; }
-      let text;
-      if(m){ const p = priceOf(m.c), n = num(m.c); text = (n > 0 ? "#" + n + " " : "") + (p != null ? money(p) : "no ask"); }
-      else {
-        const mid = f.aiLow != null && f.aiHigh != null ? (Number(f.aiLow) + Number(f.aiHigh)) / 2 : null;
-        text = mid != null ? money(roundP(mid * (1 - disc / 100))) : "ask?"; extra.push(f);
-      }
-      items.push({box:f.box, text});
-    }
-    for(const gr of groups.values()){
-      const b = {x0:Math.min(...gr.boxes.map(x => x.x0)), y0:Math.min(...gr.boxes.map(x => x.y0)), x1:Math.max(...gr.boxes.map(x => x.x1)), y1:Math.max(...gr.boxes.map(x => x.y1))};
-      const n = num(gr.lot), p = priceOf(gr.lot);
-      items.push({box:b, text:(n > 0 ? "#" + n + " " : "") + "Lot" + (p != null ? " " + money(p) : "")});
-    }
-    ph.tags = layoutTags(items); ph.qi = photoQueue().length; ph.tagText = null; ph.found = extra; ph.out = null;
-    ph.msg = found.length ? `Placed ${plural(items.length, "price tag", "price tags")} for ${plural(found.length, "card", "cards")}.` + (groups.size ? ` Cards from the same lot share one tag.` : "") + (extra.length ? ` ${plural(extra.length, "card is", "cards are")} not in your inventory, so ${extra.length === 1 ? "its tag uses" : "their tags use"} the AI estimate less your discount.` : "") + " Drag any tag to move it, or tap one away with Undo last tag." : "No cards were found in this photo.";
+    const disc = Number(S.settings.discount) || 0;
+    ph.cards = found.map((f, i) => {
+      const m = match(f), mid = f.aiLow != null && f.aiHigh != null ? (Number(f.aiLow) + Number(f.aiHigh)) / 2 : null;
+      return {id:"p" + i, box:f.box, name:[f.year, f.set, f.player].filter(Boolean).join(" "), f, invId:m ? m.c.id : null, inLot:m && m.lot ? m.lot.id : null, price:null, est:mid != null ? roundP(mid * (1 - disc / 100)) : null};
+    });
+    const byLot = new Map();
+    ph.cards.forEach(pc => { if(pc.inLot){ if(!byLot.has(pc.inLot)) byLot.set(pc.inLot, []); byLot.get(pc.inLot).push(pc.id); } });
+    ph.groups = [...byLot].map(([lotId, ids], i) => ({id:"g" + i, ids, lotId, price:null, label:""}));
+    ph.hidden = []; ph.selRefs = [];
+    relabel();
+    const extra = photoExtra(ph);
+    ph.msg = found.length ? `Placed ${plural(ph.tags.length, "price tag", "price tags")} for ${plural(found.length, "card", "cards")}.` + (ph.groups.length ? " Cards from the same lot share one tag." : "") + (extra.length ? ` ${plural(extra.length, "card is", "cards are")} not in your inventory, so ${extra.length === 1 ? "its tag uses" : "their tags use"} the AI estimate less your discount.` : "") + " Drag a tag to move it, or change the tags below." : "No cards were found in this photo.";
   }catch(e){ ph.msg = "Auto-pricing did not work: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
 }
 function addFoundCards(){
-  const ph = ui.photo; if(!ph || !ph.found || !ph.found.length) return "";
+  const ph = ui.photo, extra = photoExtra(ph); if(!extra.length) return "";
   if(S.cards.every(c => c.example)) S.cards = [];
-  for(const f of ph.found){
-    const fl = joinFlaws(flawList(f.flaws));
-    S.cards.push({id:uid(), status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:null});
+  for(const pc of extra){
+    const f = pc.f || {}, fl = joinFlaws(flawList(f.flaws)), id = uid();
+    S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null});
+    pc.invId = id;
   }
-  const n = ph.found.length; ph.found = [];
-  return `Added ${plural(n, "card", "cards")} from the photo to Review.`;
+  const made = ph.groups.filter(g => !g.lotId && mirrorGroup(g)).length;
+  relabel();
+  return `Added ${plural(extra.length, "card", "cards")} from the photo to Review.` + (made ? ` ${plural(made, "lot", "lots")} from this photo ${made === 1 ? "was" : "were"} made in your sale too.` : "");
 }
 
 /* ---------- render + events ---------- */
@@ -1644,6 +1758,13 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "pauto") return autoPrice();
+  else if(act === "pSelNone"){ ui.photo.selRefs = []; ui.photoAsk = null; }
+  else if(act === "pCombine"){ ui.photo.msg = photoGroup(selIds(), numOrNull(ui.photoAsk ?? $("#paskval").value), ""); ui.photo.selRefs = []; ui.photoAsk = null; relabel(); }
+  else if(act === "pSetAsk"){ ui.photo.msg = photoPrice(ui.photo.selRefs || [], numOrNull(ui.photoAsk ?? $("#paskval").value)); ui.photo.selRefs = []; ui.photoAsk = null; relabel(); }
+  else if(act === "pSplit"){ ui.photo.msg = photoUngroup(selGroups()); ui.photo.selRefs = []; relabel(); }
+  else if(act === "pHide"){ const ids = selIds(); ui.photo.hidden = [...new Set([...(ui.photo.hidden || []), ...ids])]; ui.photo.groups.forEach(g => { g.ids = g.ids.filter(id => !ids.includes(id)); }); ui.photo.selRefs = []; relabel(); ui.photo.msg = `Removed ${plural(ids.length, "tag", "tags")}.`; }
+  else if(act === "pShowAll"){ ui.photo.hidden = []; relabel(); }
+  else if(act === "pInstr") return photoInstr();
   else if(act === "pfoundAdd"){ ui.cmdMsg = addFoundCards(); }
   else if(act === "popen") return openPhoto(el.dataset.pid);
   else if(act === "pdel" && ui.photo){
@@ -1703,6 +1824,9 @@ document.addEventListener("change", e => {
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
+  if(t.id === "pselmode"){ ui.photoSelect = t.checked; if(!t.checked && ui.photo) ui.photo.selRefs = []; return render(); }
+  if(t.id === "paskval"){ ui.photoAsk = t.value; return; }
+  if(t.id === "pinstr"){ ui.photoInstr = t.value; return; }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
@@ -1734,7 +1858,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; });
-document.addEventListener("keydown", e => { if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; });
+document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }

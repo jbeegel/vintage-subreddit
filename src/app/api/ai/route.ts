@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backPrompt, claimsPrompt, locatePrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -37,6 +37,12 @@ export async function POST(req: Request) {
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
   else if (task === "locate") prompt = locatePrompt;
+  else if (task === "phototag") {
+    const text = String(payload.text ?? "");
+    const cards = Array.isArray(payload.cards) ? payload.cards : [];
+    if (!text || text.length > 2000 || cards.length > 500) return fail(400, "The instruction is missing or the photo has too many cards.");
+    prompt = photoTagPrompt(text, cards, Array.isArray(payload.groups) ? payload.groups : []);
+  }
   else if (task === "recheck") prompt = recheckPrompt(payload.card ?? {}, String(payload.note ?? "").slice(0, 1000), images.length);
   else if (task === "extract") {
     const text = String(payload.text ?? "");

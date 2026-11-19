@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -168,6 +168,32 @@ For each card give:
 Ignore the handwritten note, boxes, binders and anything that is not a card. List cards left to right, top row first. Asks are firm on this subreddit; do not suggest room for offers.
 
 Return JSON only: {"cards":[{"box":{"x0":0.03,"y0":0.41,"x1":0.15,"y1":0.59},"year":1969,"set":"Topps","num":"100","player":"Hank Aaron","variation":null,"grade":"Raw VG","flaws":"corner wear","aiLow":40,"aiHigh":60,"conf":0.9}]}`;
+
+export function photoTagPrompt(text: string, cards: unknown, groups: unknown): string {
+  return `A seller is labeling a sale photo of vintage baseball cards. These are the cards found in it, with their positions as fractions of the image measured from the top-left corner, their names and their current asks in USD:
+${JSON.stringify(cards)}
+
+Lots already on the photo (each shows one tag for all its cards):
+${JSON.stringify(groups)}
+
+The seller says:
+"""${text}"""
+
+Turn that into changes to the photo's tags.
+- Rows: cards whose boxes overlap vertically are in the same row. The top row has the smallest y0. "Left" means a smaller x0.
+- Use only ids listed above. Never invent cards.
+- Do only what was asked. If you cannot tell which cards are meant, return no operations and ask in "say".
+- Asks are firm on this subreddit; do not suggest room for offers.
+
+Operations:
+- {"op":"group","ids":["p12","p13"],"price":160,"label":"1959 Fleer Ted Williams lot"}  make these cards one lot with one tag. Leave out "price" to price it from the cards. "label" is optional.
+- {"op":"ungroup","ids":["g0"]}  split lots back into single tags.
+- {"op":"price","ids":["p3"],"price":25}  set the ask for cards or lots.
+- {"op":"hide","ids":["p4"]}  no tag for these cards (not for sale).
+- {"op":"show","ids":["p4"]}  bring a removed tag back.
+
+Return JSON only: {"ops":[...],"say":"one or two plain sentences on what changed"}`;
+}
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
 
