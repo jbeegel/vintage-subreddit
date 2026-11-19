@@ -224,7 +224,7 @@ function vInventory(){
     <div class="row" style="justify-content:space-between"><h2>${ui.onlyCheck ? "Cards to check" : "To decide"} <span class="note">${list.length}</span></h2>
       <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
     <p class="note">Give each card a place: a single, a price page or a lot. Placed cards move to the <a href="#sale">Sale tab</a>${placed ? `, which has ${placed} item${placed === 1 ? "" : "s"} so far` : ""}. Asks are firm: buyers claim at the price shown.</p>
-    ${list.length ? `<div class="row"><button class="small" data-act="selAll">${all ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}${ui.onlyCheck ? `<button class="small" data-act="allCards">Show every card to decide</button>` : ""}</div>` : ""}
+    ${list.length ? `<div class="row"><button class="small" data-act="selAll">${all ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}${ui.onlyCheck ? `<button class="small" data-act="allCards">Show every card to decide</button>` : `<button class="small danger" data-act="clearOpen" data-k="decide">Clear all to decide</button>`}</div>` : ""}
     <ul class="cards">${list.map(rowInv).join("") || `<li><span class="note">${any ? "Every card has a place. Check the Sale tab, then build the post." : "Nothing yet. Scan a photo to start."}</span></li>`}</ul>
     ${selBar()}
   </div>
@@ -836,7 +836,7 @@ function historyPanels(){
   const hit = r => !ui.q || [r.year, r.set, r.player, r.grade].join(" ").toLowerCase().includes(ui.q.toLowerCase());
   return `<div class="panel"><h2>Finished sales</h2>
     <p class="note">Close out a sale when it is done. It is kept as a record, sold cards leave your inventory and unsold ones stay for next time. Past results then appear as notes on matching cards and steer the next plan.</p>
-    <div class="row"><button class="primary" data-act="closeSale">Close out the current sale</button><span class="note">${esc(ui.histMsg || "")}</span></div>
+    <div class="row"><button class="primary" data-act="closeSale">Close out the current sale</button>${(S.sales || []).length ? `<button class="small danger" data-act="clearOpen" data-k="history">Clear history</button>` : ""}<span class="note">${esc(ui.histMsg || "")}</span></div>
     ${ins.length ? `<h3>What your sales show</h3><p>${ins.map(esc).join(" · ")}</p>` : ""}
     ${sales.map(s => { const sold = s.items.filter(i => i.sold != null); return `<details class="edit"><summary>${esc(dshort(s.date))} · ${esc(s.name)} · ${sold.length} of ${s.items.length} sold · ${money(sold.reduce((a, i) => a + i.sold, 0)) || "$0"}</summary>
       <div class="scroll"><table><thead><tr><th>Item</th><th>Sold as</th><th class="num">Ask</th><th class="num">Sold</th></tr></thead><tbody>${s.items.map(i => `<tr><td>${esc(i.t)}</td><td>${esc(i.section || i.kind)}</td><td class="num">${money(i.ask)}</td><td class="num">${i.sold != null ? money(i.sold) : "unsold"}</td></tr>`).join("")}</tbody></table></div><div class="row" style="padding-top:8px"><button class="small danger" data-act="delSale" data-sid="${s.id}">Delete this record</button></div></details>`; }).join("") || `<p class="note">No finished sales yet.</p>`}
@@ -1336,7 +1336,7 @@ function vPhotos(){
   const ph = ui.photo, ts = photoTargets();
   return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
     <p class="note">Take the picture, and the tool writes the headline, notes, numbers and prices onto it, with your username and today's date. No paper labels, no drawing on screenshots.</p>
-    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${(ui.photos || []).length ? "Add another photo" : "Take or choose a photo"}</button>
+    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${(ui.photos || []).length ? "Add another photo" : "Take or choose a photo"}</button>${(ui.photos || []).length ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
     ${(ui.photos || []).length ? `<div class="row thumbs">${ui.photos.map(x => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
     <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
@@ -1390,7 +1390,7 @@ function vSale(){
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
-    <div class="row"><a class="btn primary" href="#post">Build the post</a></div></div>
+    <div class="row"><a class="btn primary" href="#post">Build the post</a>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
     ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
       return `<div class="panel"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
       : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
@@ -1423,7 +1423,48 @@ function progressBar(){
   else next = ["The post is out. Paste new comments on the Claims tab as claims come in.", {href:"#claims", label:"Claims"}];
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
   return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog"><ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
-    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span>${btn}</div></div>`;
+    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}<button class="small" data-act="clearOpen">Clear…</button></span></div></div>`;
+}
+
+/* ---------- clear things out: any part of the tool's data, chosen by tick box, with Undo ---------- */
+const CLEARS = [
+  ["decide", "Cards still to decide", () => toDecide().length],
+  ["sale", "The sale: every item on the Sale tab, with its claims and orders", () => S.cards.filter(inSale).length],
+  ["orders", "Shipping details: buyer addresses and tracking numbers", () => Object.keys(S.orders || {}).length],
+  ["plan", "The sale plan and post title", () => (S.plan ? 1 : 0) + (S.settings.title ? 1 : 0)],
+  ["sold", "Your sold log", () => (S.solds || []).length],
+  ["history", "Finished sales history", () => (S.sales || []).length],
+  ["subs", "Sub prices you collected", () => (S.subComps || []).length],
+  ["photos", "Labeled photos on this device", () => (ui.photos || []).length],
+];
+function clearPanel(){
+  if(!ui.clearOpen) return "";
+  const pick = ui.clearPick || {}, chosen = CLEARS.filter(([k, , n]) => pick[k] && n());
+  return `<div class="panel pick" id="clearpanel"><div class="row" style="justify-content:space-between"><h2>Clear things out</h2><button class="small" data-act="clearClose">Close</button></div>
+    <p class="note">Tick what to remove. Undo brings everything back right after, except photos.</p>
+    <div class="clearlist">${CLEARS.map(([k, label, n]) => { const c = n(); return `<label class="inline"><input type="checkbox" data-clr="${k}" ${pick[k] && c ? "checked" : ""} ${c ? "" : "disabled"}> ${esc(label)} <span class="note">${c || "empty"}</span></label>`; }).join("")}</div>
+    ${ui.clearConfirm
+      ? `<p class="flag">Remove ${esc(chosen.map(x => x[1].split(":")[0].toLowerCase()).join(", "))}? ${pick.photos ? "Photos cannot be brought back." : "Undo brings it back."}</p><div class="row"><button class="small danger" data-act="clearGo">Yes, clear</button><button class="small" data-act="clearNo">Cancel</button></div>`
+      : `<div class="row"><button class="small" data-act="clearAll">Tick everything</button><button class="small danger" data-act="clearAsk" ${chosen.length ? "" : "disabled"}>Clear${chosen.length ? " " + chosen.length + " selected" : ""}</button></div>`}
+  </div>`;
+}
+async function clearChosen(){
+  const n0 = Object.fromEntries(CLEARS.map(([k, , n]) => [k, n()])), p = Object.fromEntries(Object.entries(ui.clearPick || {}).filter(([k, v]) => v && n0[k])), done = [];
+  ui.undo = JSON.stringify(S);
+  if(p.decide){ const n = toDecide().length; S.cards = S.cards.filter(c => !(c.status === "open" && !c.isLot && !c.section)); if(n) done.push(plural(n, "card to decide", "cards to decide")); }
+  if(p.sale){ const n = S.cards.filter(inSale).length; S.cards = S.cards.filter(c => !inSale(c)); S.orders = {}; S.postedAt = null; if(n) done.push(plural(n, "sale item", "sale items")); }
+  if(p.orders){ S.orders = {}; if(n0.orders) done.push("shipping details"); }
+  if(p.plan){ S.plan = null; S.settings.title = ""; done.push("the plan and title"); }
+  if(p.sold){ S.solds = []; done.push("the sold log"); }
+  if(p.history){ (S.sales || []).forEach(s => saleDeleted(s.id)); S.sales = []; done.push("finished sales"); }
+  if(p.subs){ S.subComps = []; done.push("collected sub prices"); }
+  if(p.photos){
+    for(const x of ui.photos || []){ await idb("del", x.id); if(ui.thumbs && ui.thumbs[x.id]) URL.revokeObjectURL(ui.thumbs[x.id]); }
+    ui.photos = []; ui.photo = null; ui.thumbs = {}; done.push("photos");
+  }
+  ui.sel.clear();
+  if(!done.length) return "Nothing was cleared.";
+  return "Cleared " + done.join(", ") + "." + (done.length === 1 && p.photos ? "" : " Undo brings it back" + (p.photos ? ", except photos." : "."));
 }
 
 /* ---------- render + events ---------- */
@@ -1435,7 +1476,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = progressBar() + cmdBar() + VIEWS[name]();
+  $("#main").innerHTML = progressBar() + clearPanel() + cmdBar() + VIEWS[name]();
   stat();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -1463,6 +1504,15 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => x !== c); ui.sel.delete(c.id); ui.cmdMsg = "Deleted " + title(c) + ". Undo brings it back."; }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "clearOpen"){
+    ui.clearOpen = true; ui.clearConfirm = false; ui.clearPick = el.dataset.k ? {[el.dataset.k]: true} : (ui.clearPick || {});
+    render(); const d = document.getElementById("clearpanel"); if(d) d.scrollIntoView({behavior:"smooth"}); return;
+  }
+  else if(act === "clearClose"){ ui.clearOpen = false; ui.clearConfirm = false; ui.clearPick = {}; }
+  else if(act === "clearAll"){ ui.clearPick = Object.fromEntries(CLEARS.map(([k]) => [k, true])); ui.clearConfirm = false; }
+  else if(act === "clearAsk"){ ui.clearConfirm = true; }
+  else if(act === "clearNo"){ ui.clearConfirm = false; }
+  else if(act === "clearGo"){ ui.cmdMsg = await clearChosen(); ui.clearOpen = false; ui.clearConfirm = false; ui.clearPick = {}; window.scrollTo(0, 0); }
   else if(act === "qSingle" || act === "qPage"){
     if(!c) return; const keep = ui.sel; ui.sel = new Set([c.id]);
     const m = act === "qSingle" ? assignSingles() : assignPage(numOrNull(ui.pagePrice) || 10);
@@ -1516,7 +1566,7 @@ document.addEventListener("click", async e => {
   else if(act === "flawBack" && c){ c.flaws = [...flawParts(c), el.dataset.v].join(", "); c.flawsOk = true; }
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
-  else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
+  else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); (S.sales || []).forEach(saleSaved); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
   else if(act === "selAll"){ (ui.onlyCheck ? S.cards.filter(needsCheck) : toDecide()).forEach(x => ui.sel.add(x.id)); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
   else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
@@ -1559,6 +1609,7 @@ document.addEventListener("change", e => {
   if(t.dataset.gp){ ui.grpPrice[t.dataset.gp] = t.value; return; }
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
+  if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
