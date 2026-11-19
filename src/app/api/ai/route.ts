@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { claimsPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { claimsPrompt, editPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -35,7 +35,12 @@ export async function POST(req: Request) {
   let prompt: string;
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
-  else if (task === "plan") {
+  else if (task === "edit") {
+    const text = String(payload.text ?? "");
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (!text || text.length > 2000 || rows.length > 2000) return fail(400, "The instruction is missing or the inventory is too large.");
+    prompt = editPrompt(text, rows, payload.settings ?? {});
+  } else if (task === "plan") {
     const text = String(payload.text ?? "");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!text || text.length > 4000 || rows.length < 2 || rows.length > 2000) return fail(400, "The plan is missing or the inventory is too large.");
@@ -71,7 +76,7 @@ export async function POST(req: Request) {
       max_tokens: 16000,
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      output_config: { effort: task === "claims" || task === "plan" ? "medium" : "high" },
+      output_config: { effort: task === "scan" || task === "grade" ? "high" : "medium" },
       messages: [{ role: "user", content }],
     });
     if (message.stop_reason === "refusal") return fail(422, "The model declined this request.", "refused");

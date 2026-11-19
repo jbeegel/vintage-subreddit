@@ -40,6 +40,10 @@ section.view{display:flex;flex-direction:column;gap:16px}
 details.why dl{margin:8px 0 0;display:grid;grid-template-columns:minmax(90px,auto) minmax(0,1fr);gap:4px 12px;font-size:13px}
 details.why dt{color:var(--muted)}
 details.why dd{margin:0;overflow-wrap:anywhere}
+.panel.cmd{margin-bottom:16px}
+.chipbtn{font:500 12px/1 var(--mono);padding:6px 8px;border-radius:3px;border:1px solid var(--line);background:var(--sunk);color:var(--ink)}
+.chipbtn.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.chipbtn.off{text-decoration:line-through;background:transparent;color:var(--muted)}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}

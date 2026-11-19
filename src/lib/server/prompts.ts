@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -59,6 +59,41 @@ Organise every row so the post carries out the plan.
 
 Return JSON only:
 {"sections":[{"name":"Singles","rows":["id1","id2"]},{"name":"$10 per card","perCard":10,"rows":["id5"]},{"name":"Lots by year","lots":[{"name":"1960 Topps commons","rows":["id3","id4"],"condition":"PR to VG","highlights":"Player A, Player B","why":"one sentence on why these belong together"}]}],"title":"[FS] ...","intro":"...","photos":["Photo 1: ..."],"gaps":[]}`;
+}
+
+export function editPrompt(text: string, rows: unknown, settings: unknown): string {
+  return `You are the control layer of a sale-prep tool used by a vintage baseball card seller on Reddit. The seller typed an instruction. Turn it into operations on their inventory.
+
+Seller's instruction:
+"""${text}"""
+
+Inventory rows. "ask" is the Reddit asking price in USD. A lot row lists its cards under "inside", and those inner ids can be used too:
+${JSON.stringify(rows)}
+
+Current settings:
+${JSON.stringify(settings)}
+
+Rules:
+- Use only ids that appear above. Never invent cards. Match what the seller means: "all the Ted Williams" means every row or inner card whose name is Ted Williams.
+- If the instruction is a question, or you cannot tell what they want, return no operations and answer or ask in "say".
+- Do only what was asked. Leave everything else alone.
+- "say": one or two plain sentences telling the seller what you did, with counts and prices.
+
+Operations:
+- {"op":"lot","name":"Ted Williams lot","ids":[...],"price":150,"section":"Lots"}  group cards into one lot. "price" is the price for the whole group; leave it out to price the lot from its cards. "section" is optional.
+- {"op":"single","ids":[...]}  sell these as singles (pulls them out of any lot).
+- {"op":"page","ids":[...],"perCard":10}  put these on a per-card price page.
+- {"op":"price","ids":[...],"price":25}  set the ask on each of these (a lot id sets the lot's price).
+- {"op":"adjust","ids":[...],"pct":-10}  raise or lower each ask by a percentage.
+- {"op":"edit","id":"...","fields":{"year":1958,"set":"Topps","num":"1","player":"...","variation":"...","grade":"Raw VG","flaws":"crease lower left"}}  correct a card's details; include only the fields that change.
+- {"op":"remove","ids":[...]}  take rows out of the sale.
+- {"op":"breakLot","ids":[...]}  split lots back into their cards.
+- {"op":"section","ids":[...],"name":"Hall of Famers"}  move rows into a named section of the post.
+- {"op":"sectionOrder","names":["Singles","$10 per card","Lots"]}  set the order sections appear in.
+- {"op":"status","ids":[...],"status":"claimed","buyer":"username","soldPrice":40}  mark rows claimed, sold or open. "buyer" and "soldPrice" are optional.
+- {"op":"settings","fields":{"discount":15,"lotDiscount":10,"singleMin":20,"shipFee":5,"pay":"...","ship":"...","title":"...","intro":"...","condNote":"...","showComps":true,"callout":true}}  change sale settings; include only the fields that change.
+
+Return JSON only: {"ops":[...],"say":"..."}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.

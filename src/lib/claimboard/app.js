@@ -172,7 +172,7 @@ async function scan(files){
     for(const c of found){
       const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
       if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-      S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
+      S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
       added++;
     }
     ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
@@ -235,6 +235,7 @@ function rowInv(c){
       ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
       ${links(c)}
     </div>
+    ${flawBox(c)}
     ${whyBox(c)}
     <details class="edit"><summary>Edit details</summary><div class="fields">
       ${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}
@@ -293,6 +294,7 @@ function vPost(){
   <div class="panel"><h2>Draft</h2>
     ${missing ? `<p class="flag">${missing} row${missing === 1 ? " has" : "s have"} no price and ${missing === 1 ? "is" : "are"} left out of the table.</p>` : ""}
     ${st.callout !== false ? `<p class="note">${flagged ? flagged + " item" + (flagged === 1 ? " has" : "s have") + " a condition issue called out in bold." : "No condition issues were found to call out. If a card has one, add it under Edit details, Flaws."}</p>` : ""}
+    ${unconfirmed() ? `<p class="flag">${unconfirmed()} card${unconfirmed() === 1 ? " has" : "s have"} condition notes suggested by the scan that you have not confirmed. Review them on the Inventory tab before posting.</p>` : ""}
     ${backs ? `<p class="flag">${backs} card${backs === 1 ? " has" : "s have"} not had the back checked. Look before you post: back damage is the issue buyers most often find undisclosed.</p>` : ""}
     <h3>Title</h3><textarea id="out-title" readonly style="min-height:44px">${esc(t)}</textarea>
     <div class="row"><button class="small" data-copy="out-title">Copy title</button></div>
@@ -487,7 +489,7 @@ function whyLines(c){
     return out;
   }
   out.push(["Identified as", title(c) + (c.conf != null ? `, ${Math.round(c.conf * 100)}% confidence.` : ".") + (c.idWhy ? " " + c.idWhy : "") + (c.needsBack ? " The back should be checked to confirm." : "")]);
-  out.push(["Condition seen", [c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded."]);
+  out.push(["Condition", ([c.grade, c.flaws].filter(Boolean).join(". ") || "Not recorded.") + (c.flawsAI != null ? (c.flawsOk ? ". Reviewed by you." : ". Suggested by the scan and not yet confirmed by you.") + (c.flawsAI && c.flawsAI !== c.flaws ? " The scan first suggested: " + c.flawsAI + "." : "") : "")]);
   if(c.comp != null) out.push(["Value", `Sold comp of ${money(c.comp)} that you entered${c.compSrc && c.compSrc !== "example" ? " (" + c.compSrc + ")" : c.compSrc === "example" ? " (example figure)" : ""}.`]);
   else if(c.aiLow != null && c.aiHigh != null) out.push(["Value", `${money(c.aiLow)} to ${money(c.aiHigh)} raw in this condition. ${c.valueWhy || ""} This is an AI estimate from general knowledge, not a record of actual sales. Use the eBay solds and SportsCardsPro links to confirm.`]);
   else out.push(["Value", "None yet."]);
@@ -502,6 +504,21 @@ function whyLines(c){
   return out;
 }
 const whyBox = c => `<details class="edit why"><summary>Why this ${c.isLot ? "lot and price" : "value and ask"}</summary><dl>${whyLines(c).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`;
+
+/* ---------- condition notes are suggestions: the seller keeps, drops, restores or adds each one ---------- */
+function flawBox(c){
+  if(c.isLot || c.status !== "open") return "";
+  const parts = flawParts(c), have = parts.map(x => x.toLowerCase());
+  const dropped = flawParts({flaws:c.flawsAI}).filter(x => !have.includes(x.toLowerCase()));
+  const pending = c.flawsAI != null && !c.flawsOk;
+  return `<div class="links flaws"><span class="note">Condition notes${pending ? ", suggested from the photo" : ""}:</span>
+      ${parts.map((x, i) => `<button class="chipbtn ${ISSUE.test(x) ? "warn" : ""}" data-act="flawDrop" data-i="${i}" aria-label="Remove note: ${esc(x)}">${esc(x)} ×</button>`).join("")}
+      ${dropped.map(x => `<button class="chipbtn off" data-act="flawBack" data-v="${esc(x)}" aria-label="Restore note: ${esc(x)}">${esc(x)} +</button>`).join("")}
+      <input data-f="flawAdd" placeholder="Add your own note" aria-label="Add a condition note" style="width:170px">
+      ${pending ? `<button class="small" data-act="flawOk">Looks right</button>` : c.flawsOk ? `<span class="chip ok">condition confirmed</span>` : ""}
+    </div>`;
+}
+const unconfirmed = () => S.cards.filter(c => c.status === "open").reduce((a, c) => a + (c.isLot ? c.members : [c]).filter(m => m.flawsAI != null && !m.flawsOk).length, 0);
 
 /* ---------- single suggestions: cards worth selling alone are pulled out for a one-tap decision ---------- */
 const singleMin = () => Number(S.settings.singleMin ?? 20) || 0;
@@ -521,7 +538,7 @@ function findCard(id){
 }
 function relot(lot){
   const sum = lot.members.reduce((a, c) => a + (priceOf(c) || 0), 0), unpriced = lot.members.some(c => priceOf(c) == null);
-  lot.price = sum && !unpriced ? roundP(sum * (1 - Number(S.settings.lotDiscount ?? 10) / 100)) : null;
+  if(!lot.fixed) lot.price = sum && !unpriced ? roundP(sum * (1 - Number(S.settings.lotDiscount ?? 10) / 100)) : null;
   lot.player = lot.player.replace(/\(\d+ cards\)$/, "(" + lot.members.length + " cards)");
 }
 function setAside(id, choice){
@@ -793,6 +810,108 @@ function vShip(){
   </section>`;
 }
 
+/* ---------- say it in words: a typed instruction becomes a set of edits, applied together and undoable ---------- */
+ui.cmd = ""; ui.cmdMsg = ""; ui.undo = null;
+function take(id){
+  const f = findCard(id); if(!f) return [];
+  if(f.c.isLot){ S.cards = S.cards.filter(x => x !== f.c); f.c.members.forEach(m => { detach(m); delete m.section; }); return f.c.members; }
+  if(f.lot){
+    const lot = f.lot; lot.members = lot.members.filter(m => m !== f.c);
+    if(lot.members.length < 2){ lot.members.forEach(m => { detach(m); m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
+    else { if(lot.manual) describeLot(lot); relot(lot); }
+  } else S.cards = S.cards.filter(x => x !== f.c);
+  detach(f.c); delete f.c.section;
+  return [f.c];
+}
+function applyOps(ops){
+  let n = 0;
+  const A = x => Array.isArray(x) ? x.map(String) : [];
+  const isOpen = id => { const f = findCard(id); return f && (f.lot ? f.lot.status : f.c.status) === "open"; };
+  for(const o of Array.isArray(ops) ? ops : []){
+    const all = A(o.ids), ids = all.filter(isOpen);
+    if(o.op === "lot"){
+      const cards = ids.flatMap(take);
+      if(cards.length < 2){ S.cards.push(...cards); continue; }
+      const sec = String(o.section || "Lots");
+      cards.forEach(c => { c.pin = "lot"; c.section = sec; });
+      const lot = {id:uid(), status:"open", isLot:true, manual:true, members:cards, section:sec, year:"", set:"", num:"", player:String(o.name || "Lot") + " (" + cards.length + " cards)", grade:"", flaws:"", why:"You asked for this group.", conf:1, comp:null, price:null};
+      describeLot(lot);
+      if(Number(o.price) > 0){ lot.price = Number(o.price); lot.fixed = true; } else relot(lot);
+      S.cards.push(lot); ensureSection(sec); n++;
+    } else if(o.op === "single"){
+      const cards = ids.flatMap(take);
+      cards.forEach(c => { c.pin = "single"; c.manual = true; c.section = "Singles"; });
+      S.cards.push(...cards); if(cards.length){ ensureSection("Singles"); n++; }
+    } else if(o.op === "page" && Number(o.perCard) > 0){
+      const cards = ids.flatMap(take), name = "$" + Number(o.perCard) + " per card";
+      cards.forEach(c => { c.prevPrice = c.price ?? null; c.price = Number(o.perCard); c.pin = "page"; c.manual = true; c.section = name; });
+      S.cards.push(...cards); if(cards.length){ ensureSection(name); n++; }
+    } else if(o.op === "price" || o.op === "adjust"){
+      for(const id of ids){
+        const f = findCard(id); if(!f) continue;
+        const cur = priceOf(f.c), v = o.op === "price" ? Number(o.price) : cur != null ? roundP(cur * (1 + Number(o.pct) / 100)) : null;
+        if(!(v > 0)) continue;
+        f.c.price = v; if(f.c.isLot) f.c.fixed = true; if(f.lot) relot(f.lot); n++;
+      }
+    } else if(o.op === "edit"){
+      const f = findCard(String(o.id)); if(!f || !o.fields) continue;
+      for(const k of ["year","set","num","player","variation","grade","flaws"]) if(o.fields[k] != null) f.c[k] = o.fields[k];
+      delete f.c.example; if(f.lot && f.lot.manual) describeLot(f.lot); n++;
+    } else if(o.op === "remove"){
+      ids.forEach(id => { if(take(id).length) n++; });
+    } else if(o.op === "breakLot"){
+      ids.forEach(id => { const f = findCard(id); if(f && f.c.isLot){ const i = S.cards.indexOf(f.c); f.c.members.forEach(m => { detach(m); delete m.section; }); S.cards.splice(i, 1, ...f.c.members); n++; } });
+    } else if(o.op === "section" && o.name){
+      const name = String(o.name);
+      ids.forEach(id => { const f = findCard(id); if(f && !f.lot){ f.c.section = name; f.c.manual = true; n++; } });
+      ensureSection(name);
+    } else if(o.op === "sectionOrder"){
+      const names = A(o.names); S.plan = S.plan || {text:"", sections:[], photos:[], gaps:[]};
+      const cur = S.plan.sections; S.plan.sections = [...names.filter(x => cur.includes(x)), ...cur.filter(x => !names.includes(x))]; n++;
+    } else if(o.op === "status" && ["open","claimed","sold"].includes(o.status)){
+      all.forEach(id => {
+        const f = findCard(id); if(!f || f.lot) return; const c = f.c;
+        c.status = o.status;
+        if(o.status === "open"){ c.claimBy = ""; c.claimAt = null; }
+        else { if(o.buyer) c.claimBy = String(o.buyer).replace(/^u\//, ""); c.claimAt = c.claimAt || Date.now(); }
+        S.solds = S.solds.filter(s => s.cardId !== c.id);
+        if(o.status === "sold"){
+          c.soldPrice = Number(o.soldPrice) > 0 ? Number(o.soldPrice) : c.soldPrice ?? priceOf(c); c.soldAt = Date.now();
+          if(c.soldPrice != null && !c.example) S.solds.unshift({cardId:c.id, year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, price:c.soldPrice, date:c.soldAt});
+        }
+        n++;
+      });
+    } else if(o.op === "settings" && o.fields){
+      const f = o.fields, st = S.settings;
+      for(const k of ["discount","lotDiscount","singleMin","shipFee","pweMax"]) if(f[k] != null && !isNaN(Number(f[k]))) st[k] = Number(f[k]);
+      for(const k of ["pay","ship","title","intro","condNote","paypal"]) if(typeof f[k] === "string") st[k] = f[k];
+      for(const k of ["showComps","callout"]) if(typeof f[k] === "boolean") st[k] = f[k];
+      if(SORTS[f.sort]) st.sort = f.sort;
+      n++;
+    }
+  }
+  return n;
+}
+async function runCmd(){
+  const text = ui.cmd.trim(); if(!text) return;
+  if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
+  ui.busy = ui.cmdMsg = "Working on it"; render();
+  try{
+    const rows = S.cards.map(c => ({id:c.id, card:title(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c), section:c.section || "", status:c.status, buyer:c.claimBy || "", inside:c.isLot ? c.members.map(m => ({id:m.id, card:title(m), grade:m.grade || "", ask:priceOf(m)})) : undefined}));
+    const st = S.settings, settings = {discount:st.discount, lotDiscount:st.lotDiscount ?? 10, singleMin:st.singleMin ?? 20, shipFee:st.shipFee, pay:st.pay, ship:st.ship, title:st.title, intro:st.intro, sections:(S.plan && S.plan.sections) || []};
+    const r = (await ai("edit", {text, rows, settings})) || {};
+    const before = JSON.stringify(S), n = applyOps(r.ops);
+    if(n){ ui.undo = before; ui.cmd = ""; ui.sel.clear(); save(); }
+    ui.cmdMsg = !n && Array.isArray(r.ops) && r.ops.length ? "Nothing in your inventory matched that, so nothing changed." : r.say ? String(r.say) : n ? "Done." : "Nothing changed.";
+  }catch(e){ ui.cmdMsg = "That did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function cmdBar(){
+  return `<div class="panel cmd"><div class="row"><input id="cmd" class="grow" value="${esc(ui.cmd)}" placeholder="Tell it what to change: put all the Ted Williams in one lot at $150" aria-label="Instruction" ${ui.busy ? "disabled" : ""}>
+    <button class="primary" data-act="cmd" ${ui.busy ? "disabled" : ""}>Do it</button>${ui.undo ? `<button class="small" data-act="undo">Undo</button>` : ""}</div>
+    ${ui.cmdMsg ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.cmdMsg)}</p>` : ""}</div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, post:vPost, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -800,7 +919,7 @@ function render(){
   document.querySelectorAll("#nav a").forEach(a => a.getAttribute("href") === "#" + name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   $("#n-inv").textContent = S.cards.length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
-  $("#main").innerHTML = VIEWS[name]();
+  $("#main").innerHTML = cmdBar() + VIEWS[name]();
   renderAuth();
   if(name === "sold" && ui.community == null && !ui.communityMsg) loadCommunity();
 }
@@ -822,6 +941,11 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = p.join(", "); c.flawsOk = true; }
+  else if(act === "flawBack" && c){ c.flaws = [...flawParts(c), el.dataset.v].join(", "); c.flawsOk = true; }
+  else if(act === "flawOk" && c){ c.flawsOk = true; }
+  else if(act === "cmd") return runCmd();
+  else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
   else if(act === "selAll"){ S.cards.forEach(x => { if(x.status === "open" && !x.isLot) ui.sel.add(x.id); }); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
   else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
@@ -871,6 +995,7 @@ document.addEventListener("change", e => {
   const li = t.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id), f = t.dataset.f;
   if(!c || !f) return;
   if(["comp","price","soldPrice"].includes(f)) c[f] = numOrNull(t.value);
+  else if(f === "flawAdd"){ if(t.value.trim()){ c.flaws = [...flawParts(c), t.value.trim()].join(", "); c.flawsOk = true; } }
   else if(f === "claimBy"){ c.claimBy = t.value.replace(/^u\//, "").trim(); if(c.claimBy && c.status === "open"){ c.status = "claimed"; c.claimAt = Date.now(); } }
   else if(f === "status"){
     const was = c.status; c.status = t.value;
@@ -885,5 +1010,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; });
+document.addEventListener("keydown", e => { if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); init(makeSupabase);
 }
