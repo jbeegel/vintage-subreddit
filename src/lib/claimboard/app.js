@@ -245,9 +245,9 @@ function rowInv(c){
   return `<li data-id="${c.id}">
     <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed</span>` : ""}${c.section ? ` <span class="chip ok">${esc(c.section)}</span>` : ""}</div>
       <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>
-      ${hobbyLine(c)}${valueLine(c)}${histLine(c)}</div></div>
+      ${hobbyLine(c)}${valueLine(c)}${histLine(c)}${pcLine(c)}</div></div>
     <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
-    ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
+    ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button><button class="small" data-act="pcOneRow" ${ui.busy ? "disabled" : ""}>${S.priceCheck && S.priceCheck.items[c.id] ? "Check again" : "Check price"}</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
     ${needsCheck(c) ? checkBox(c) : ""}
     ${resultBox(c)}
     ${rqBox(c)}
@@ -737,7 +737,7 @@ function singleCandidates(){
       // a card worth selling alone, or one carrying most of a small lot's value
       for(const m of c.members || []) if(!m.pin && ((priceOf(m) || 0) >= min || (tot && (priceOf(m) || 0) >= 10 && (priceOf(m) || 0) / tot >= .4))) out.push({c:m, lot:c});
     }
-    else if(!c.pin && !c.section && (priceOf(c) || 0) >= min) out.push({c, target:anchorTarget(c)});
+    else if(!c.pin && !c.section && (priceOf(c) || 0) >= min && anchorTarget(c)) out.push({c, target:anchorTarget(c)});
   }
   return out;
 }
@@ -774,7 +774,8 @@ function pullAdvice(x){
   const st = sellThrough("single", p), sl = sellThrough("lot", 0);
   if(st.n >= 3){ if(st.rate >= .6) score += 1; else if(st.rate <= .35) score -= 1; why.push(`Your singles asked ${money(st.band[0])} to ${st.band[1] > 1e8 ? "up" : money(st.band[1])}: ${st.s} of ${st.n} sold.`); }
   if(sl.n >= 3 && st.n >= 3 && sl.rate > st.rate + .2){ score -= 1; why.push(`Your lots sell through better: ${sl.s} of ${sl.n} sold.`); }
-  if(!soldAlone.length && !flop.length && !ev.length && st.n < 3) why.push("No sales history or comps for this card yet, so this is based on its value and the rest of the lot. Run Double-check prices on the Sale tab for recent sales.");
+  if(pc && !ev.length && pc.why) why.push("Price check: " + pc.why + (Number(pc.suggest) > 0 && Number(pc.suggest) !== p ? ` It suggests ${money(Number(pc.suggest))}.` : ""));
+  if(!pc && !soldAlone.length && !flop.length && st.n < 3) why.push("No sales history or comps for this card yet, so this is based on its value and the rest of the lot. Tap Check this price to compare it with recent sales.");
   const rec = !lot || score > 0 ? "single" : "anchor";
   return {rec, strong:Math.abs(score) >= 2, why, withIt, without, others:others.length, lot};
 }
@@ -819,7 +820,10 @@ function singlesPanel(){
       return `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, x.lot ? "now in " + x.lot.player : x.target ? "on its own; could anchor " + lotName : c.where].filter(Boolean).join(" · "))}</div>
         <div class="meta"><strong>Recommended: ${solo ? "sell it alone" : "keep it as the lot's anchor"}</strong>${a.strong ? "" : " (a close call)"}</div>
         ${a.why.length ? `<ul class="chg meta">${a.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</div>
-      <div class="nums"><button class="${solo ? "primary" : "small"}" data-act="single">Sell alone at ${money(priceOf(c))}${x.lot ? a.without != null ? `, lot becomes ${money(a.without)}` : ", the rest go loose" : ""}</button>
+      <div class="nums"><label>Ask<input class="money" data-sask="${c.id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>
+        <button class="small" data-act="pcOne" data-cid="${c.id}" ${ui.busy ? "disabled" : ""}>${S.priceCheck && S.priceCheck.items[c.id] ? "Check again" : "Check this price"}</button>
+        ${(() => { const r = S.priceCheck && S.priceCheck.items[c.id]; return r && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(c) ? `<button class="small" data-act="pPcUse" data-cid="${c.id}" data-v="${Number(r.suggest)}">Use ${money(Number(r.suggest))}</button>` : r ? `<span class="chip ok">check: ask looks right</span>` : ""; })()}
+        <button class="${solo ? "primary" : "small"}" data-act="single">Sell alone at ${money(priceOf(c))}${x.lot ? a.without != null ? `, lot becomes ${money(a.without)}` : ", the rest go loose" : ""}</button>
         ${x.lot ? `<button class="${solo ? "small" : "primary"}" data-act="keeplot">Keep as anchor, lot ${money(a.withIt)}</button>` : x.target ? `<button class="${solo ? "small" : "primary"}" data-act="anchorIn">Add to ${esc(lotName)} as its anchor, lot ${money(a.withIt)}</button>` : ""}</div></li>`; }).join("")}</ul>
     ${cs.length > 1 ? `<div class="row"><button data-act="singleAll">Follow all ${cs.length} recommendations</button></div>` : ""}`
     : `<p class="note">No undecided cards at $${min} or more right now.</p>`}
@@ -1879,17 +1883,17 @@ async function runCheck(only, photo){
   try{
     for(let i = 0; i < items.length; i += 15){
       const chunk = items.slice(i, i + 15);
-      ui.busy = `Double-checking prices, ${Math.min(i + 15, items.length)} of ${items.length}. Looking up recent sales can take a minute or two.`; render();
+      ui.busy = `Double-checking prices, ${Math.min(i + 15, items.length)} of ${items.length}. Looking up recent sales can take a minute or two.`; if(photo === "here") ui.cmdMsg = ui.busy; render();
       const r = (await ai("pricecheck", {items:chunk, discount})) || {};
       (Array.isArray(r.items) ? r.items : []).forEach(x => { if(x && x.id) res[x.id] = x; });
       if(r.summary) notes.push(String(r.summary));
     }
     S.priceCheck = {at:Date.now(), items:{...(S.priceCheck && S.priceCheck.items || {}), ...res}, summary:notes.join(" ")};
     const off = Object.values(res).filter(x => x.verdict !== "ok").length;
-    ui.cmdMsg = `Price check done: ${off ? plural(off, "ask looks", "asks look") + " off." : "every ask looks right."}${photo ? " Suggestions are in the list under the photo." : " The results are at the top of the Sale tab."}`;
-    if(photo && ui.photo) ui.photo.msg = ui.cmdMsg;
+    ui.cmdMsg = `Price check done: ${off ? plural(off, "ask looks", "asks look") + " off." : "every ask looks right."}${photo === "here" ? " The result is shown with the card." : photo ? " Suggestions are in the list under the photo." : " The results are at the top of the Sale tab."}`;
+    if(photo === true && ui.photo) ui.photo.msg = ui.cmdMsg;
     save();
-  }catch(e){ ui.cmdMsg = "The price check did not work: " + (e && (e.message || e.code) || "unknown error"); if(photo && ui.photo) ui.photo.msg = ui.cmdMsg; }
+  }catch(e){ ui.cmdMsg = "The price check did not work: " + (e && (e.message || e.code) || "unknown error"); if(photo === true && ui.photo) ui.photo.msg = ui.cmdMsg; }
   ui.busy = ""; render();
 }
 const evidenceList = r => (r.evidence || []).length ? `<div class="meta">Evidence: ${(r.evidence || []).slice(0, 3).map(e => esc([e.source, e.price != null && !isNaN(Number(e.price)) ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")) + (/^https?:\/\//.test(String(e.url || "")) ? ` <a href="${esc(e.url)}" target="_blank" rel="noopener">see it</a>` : "")).join(" · ")}</div>` : "";
@@ -2621,6 +2625,13 @@ function numberPanel(){
   </div>`;
 }
 
+/* the price check's result for one card, shown on its Review row */
+function pcLine(c){
+  const r = S.priceCheck && S.priceCheck.items[c.id]; if(!r || c.status !== "open") return "";
+  const v = Number(r.suggest), diff = v > 0 && v !== priceOf(c);
+  return `<div class="val hist"><span class="chip ${diff ? (r.verdict === "raise" ? "ok" : "warn") : "ok"}">${diff ? "check says " + money(v) : "check: ask looks right"}</span> ${esc(r.why || "")}${diff ? ` <button class="small" data-act="pPcUse" data-cid="${c.id}" data-v="${v}">Use ${money(v)}</button>` : ""}</div>${evidenceList(r)}`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2794,6 +2805,8 @@ document.addEventListener("click", async e => {
     ui.selMsg = act === "asSingles" ? assignSingles() : act === "asYearLot" ? assignYearLots() : assignPage(numOrNull(ui.pagePrice));
     if(!ui.selMsg.startsWith("Enter")) ui.sel.clear();
   }
+  else if(act === "pcOne"){ const f = findCard(el.dataset.cid); if(f) return runCheck([f.c], "here"); }
+  else if(act === "pcOneRow" && c) return runCheck([c], "here");
   else if(act === "single" || act === "keeplot"){ const h = el.closest("[data-sid]"); if(h) setAside(h.dataset.sid, act === "single" ? "single" : "lot"); }
   else if(act === "anchorIn"){ const h = el.closest("[data-sid]"), f = h && findCard(h.dataset.sid), lot = f && !f.lot && anchorTarget(f.c); if(lot) anchorInto(f.c, lot); }
   else if(act === "singleAll"){ singleCandidates().map(x => [x, pullAdvice(x)]).forEach(([x, a]) => { if(a.rec === "single") setAside(x.c.id, "single"); else if(x.lot) setAside(x.c.id, "lot"); else if(x.target) anchorInto(x.c, x.target); }); }
@@ -2840,6 +2853,7 @@ document.addEventListener("change", e => {
   if(t.dataset.invnums){ const f = findCard(t.dataset.invnums); if(f && f.c.inv){ const out = []; for(const m of String(t.value).matchAll(/\d+/g)) out.push(+m[0]); f.c.inv.list = out.filter(n => n > 0); f.c.inv.unread = 0; save(); } return render(); }
   if(t.id === "wanttext"){ ui.wantText = t.value; return; }
   if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
+  if(t.dataset.sask){ const f = findCard(t.dataset.sask); if(f){ const v = numOrNull(t.value); f.c.price = v > 0 ? v : null; if(f.lot) relot(f.lot); save(); } return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
