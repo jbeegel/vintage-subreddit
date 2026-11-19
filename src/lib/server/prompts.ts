@@ -12,7 +12,7 @@ export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
 
 Rules:
 - Identify year and set from the card design. Give the card number only if you can read it or are confident of it from the set checklist. Otherwise use null.
-- "flaws" is what the seller will disclose to buyers, so be specific and say where: "crease lower left", "pen mark on back", "paper loss top edge", "65/35 left to right". List every issue you can see, most serious first. Do not write vague notes like "some wear".
+- "flaws" is what the seller will disclose to buyers: short phrases separated by semicolons, each under eight words, no full sentences, for example "hand-cut, uneven edges; rounded corners; ink mark below bio". Doubts about which card or version it is go in "idWhy", not here. Be specific and say where: "crease lower left", "pen mark on back", "paper loss top edge", "65/35 left to right". List every issue you can see, most serious first. Do not write vague notes like "some wear".
 - Do not guess. If the photo is blurry, cropped or ambiguous, still list the card but lower "conf" and say why in "flaws".
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
 - Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.

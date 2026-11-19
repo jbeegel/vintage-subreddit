@@ -223,7 +223,7 @@ function vInventory(){
   <div class="panel" id="decide">
     <div class="row" style="justify-content:space-between"><h2>${ui.onlyCheck ? "Cards to check" : "To decide"} <span class="note">${list.length}</span></h2>
       <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
-    <p class="note">Give each card a place: a single, a price page or a lot. Placed cards move to the <a href="#sale">Sale tab</a>${placed ? `, which has ${placed} item${placed === 1 ? "" : "s"} so far` : ""}. Asks are firm: buyers claim at the price shown.</p>
+    <p class="note">Give each card a place: a single, a price page or a lot. Placed cards move to the <a href="#sale">Sale tab</a>${placed ? `, which has ${placed} item${placed === 1 ? "" : "s"} so far` : ""}. Asks are firm: buyers claim at the price shown. To group cards the tool did not suggest, tick them and tap Combine into one lot, or type it in the bar at the top, for example "put the 1961 Post cards in one lot".</p>
     ${list.length ? `<div class="row"><button class="small" data-act="selAll">${all ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}${ui.onlyCheck ? `<button class="small" data-act="allCards">Show every card to decide</button>` : `<button class="small danger" data-act="clearOpen" data-k="decide">Clear all to decide</button>`}</div>` : ""}
     <ul class="cards">${list.map(rowInv).join("") || `<li><span class="note">${any ? "Every card has a place. Check the Sale tab, then build the post." : "Nothing yet. Scan a photo to start."}</span></li>`}</ul>
     ${selBar()}
@@ -264,7 +264,13 @@ function rowInv(c){
 
 /* Condition problems a buyer would want to know before claiming. Ordinary corner and edge wear is left to the grade. */
 const ISSUE = /creas|wrinkl|paper loss|writing|written|\bpen\b|\bink|pencil|\bmark|stain|trim|tape|pinhole|\bhole|\btear|torn|miscut|off[- ]?cent|\boc\b|\d{2}\/\d{2}|water|scuff|scratch|residue|glue|damage|\bbend|\bbent|chip|\bloss\b|fad(ed|ing)|tilt|diamond cut|rounded|\bding|wax|gum|skinned|rubber band|album|punch/i;
-const flawParts = c => String(c.flaws || "").split(/[,;.]\s*/).map(x => x.trim()).filter(Boolean);
+/* Condition notes are stored joined by "; ". Older notes used commas, and some scans wrote whole sentences, so split on whichever the text uses. */
+const flawParts = c => {
+  const t = String(c.flaws || "").trim(); if(!t) return [];
+  const parts = t.includes(";") ? t.split(/;\s*/) : /[a-z0-9)]\.\s+[A-Z]/.test(t) ? t.split(/(?<!\bvs)(?<!\bv)\.\s+(?=[A-Z])/) : t.split(/,\s*/);
+  return parts.map(x => x.trim().replace(/\.$/, "")).filter(Boolean);
+};
+const joinFlaws = list => list.join("; ");
 const issuesOf = c => c.isLot ? [] : flawParts(c).filter(x => ISSUE.test(x));
 const DEFAULT_COND_NOTE = "Every condition issue I can see is called out in bold and already priced in. Ask for more photos of anything before you claim.";
 function condCell(c, callout){
@@ -489,13 +495,22 @@ function assignYearLots(){
   if(made) ensureSection("Lots by year");
   return [made ? made + " year lot" + (made === 1 ? "" : "s") + " built." : "", alone ? alone + " card" + (alone === 1 ? " has" : "s have") + " no other selected card from the same year and set, so " + (alone === 1 ? "it was" : "they were") + " left alone." : ""].filter(Boolean).join(" ");
 }
+function combineLot(){
+  const cs = selected(); if(cs.length < 2) return "Tick at least two cards to combine.";
+  const same = f => cs.every(c => String(c[f] ?? "").toLowerCase() === String(cs[0][f] ?? "").toLowerCase() && cs[0][f]);
+  const name = same("year") && same("set") ? `${cs[0].year} ${cs[0].set} lot` : same("player") ? `${cs[0].player} lot` : same("year") ? `${cs[0].year} lot` : "Mixed lot";
+  if(!applyOps([{op:"lot", name, ids:cs.map(c => c.id), section:"Lots"}])) return "Those cards could not be combined.";
+  const lot = S.cards[S.cards.length - 1]; if(lot && lot.isLot) lot.why = "You combined these by hand.";
+  return `Combined ${cs.length} cards into ${name} at ${money(priceOf(lot)) || "no price yet"}. It is on the Sale tab, where you can change the price or the name.`;
+}
 function selBar(){
   const n = selected().length, all = S.cards.filter(c => ui.sel.has(c.id)).length, off = n ? "" : "disabled";
   if(!all) return ui.selMsg ? `<p class="note">${esc(ui.selMsg)}</p>` : "";
   return `<div class="bar"><strong>${all} selected</strong>
+    <button class="small primary" data-act="asLot" ${all >= 2 && n === all ? "" : "disabled"}>Combine into one lot</button>
     <button class="small danger" data-act="delSel">Delete</button>
     <button class="small" data-act="asSingles" ${off}>Sell as singles</button>
-    <button class="small" data-act="asYearLot" ${off}>Put in a year lot</button>
+    <button class="small" data-act="asYearLot" ${off}>Year lots</button>
     <span class="row" style="gap:6px"><button class="small" data-act="asPage" ${off}>Put on a page at</button><span>$</span><input class="money" id="pageprice" inputmode="decimal" value="${esc(ui.pagePrice)}" aria-label="Price per card"><span>per card</span></span>
   </div>`;
 }
@@ -591,7 +606,7 @@ async function readBack(file, id){
       if(r.grade) c.grade = String(r.grade);
       if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
       const have = flawParts(c).map(x => x.toLowerCase()), add = (Array.isArray(r.backFlaws) ? r.backFlaws : []).map(String).filter(x => x && !have.includes(x.toLowerCase()));
-      if(add.length){ c.flaws = [...flawParts(c), ...add].join(", "); c.flawsAI = [...flawParts({flaws:c.flawsAI}), ...add].join(", "); c.flawsOk = false; }
+      if(add.length){ c.flaws = joinFlaws([...flawParts(c), ...add]); c.flawsAI = joinFlaws([...flawParts({flaws:c.flawsAI}), ...add]); c.flawsOk = false; }
       c.needsBack = false; c.backSeen = true; c.idOk = (c.conf ?? 0) >= .75;
       c.backMsg = (title(c) !== before ? `The back changed this to ${title(c)}.` : "The back confirms it.") + (add.length ? ` New condition notes from the back: ${add.join(", ")}.` : "") + (c.idOk ? "" : " It is still not certain, so check the details.");
       if(c.example) delete c.example;
@@ -615,7 +630,7 @@ function groupSuggestions(){
   for(const [, list] of by(c => SLAB.test(c.grade || "") && c.year ? norm(c.year) + "|" + norm(c.set) : ""))
     if(list.length >= 3) add("s:" + norm(list[0].year) + "|" + norm(list[0].set), `${list[0].year} ${list[0].set} graded lot`, `${list.length} graded ${list[0].year} ${list[0].set} cards. A matching run of slabs sells well together.`, list);
   for(const [, list] of by(c => c.year && !SLAB.test(c.grade || "") && (priceOf(c) ?? 0) < min ? norm(c.year) + "|" + norm(c.set) : ""))
-    if(list.length >= 4) add("y:" + norm(list[0].year) + "|" + norm(list[0].set), `${list[0].year} ${list[0].set} lot`, `${list.length} cards from ${list[0].year} ${list[0].set}, each asking under ${money(min)}. Easier to sell as one lot.`, list);
+    if(list.length >= 3) add("y:" + norm(list[0].year) + "|" + norm(list[0].set), `${list[0].year} ${list[0].set} lot`, `${list.length} cards from ${list[0].year} ${list[0].set}, each asking under ${money(min)}. Low-value cards from one set sell faster as a lot.`, list);
   return out.sort((a, b) => b.cards.length - a.cards.length);
 }
 function groupPanel(){
@@ -672,7 +687,7 @@ async function recheck(id){
     if(r.grade) c.grade = String(r.grade);
     if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
     const have = flawParts(c).map(x => x.toLowerCase()), add = flawList(r.flaws).filter(x => !have.includes(x.toLowerCase()));
-    if(add.length){ c.flaws = [...flawParts(c), ...add].join(", "); c.flawsAI = [...flawParts({flaws:c.flawsAI}), ...add].join(", "); c.flawsOk = false; }
+    if(add.length){ c.flaws = joinFlaws([...flawParts(c), ...add]); c.flawsAI = joinFlaws([...flawParts({flaws:c.flawsAI}), ...add]); c.flawsOk = false; }
     if(r.sawBack){ c.backSeen = true; c.needsBack = false; }
     c.idOk = (c.conf ?? 0) >= .75;
     c.photosSeen = (c.photosSeen || 0) + n; c.recheckNote = q.note || ""; c.recheckSummary = String(r.summary || "");
@@ -693,7 +708,7 @@ async function scanOne(files){
     if(r.mixed) ui.scanMsg = (r.summary ? String(r.summary) + " " : "") + "Turn off \"These photos are all one card\" to scan them as separate cards.";
     else {
       if(S.cards.every(c => c.example)) S.cards = [];
-      const fl = flawList(r.flaws).join(", ");
+      const fl = joinFlaws(flawList(r.flaws));
       const c = {id:uid(), status:"open", year:r.year ?? "", set:r.set ?? "", num:r.num ?? "", player:r.player ?? "Unidentified card", variation:r.variation ?? "", grade:r.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof r.conf === "number" ? r.conf : .5, needsBack:false, backSeen:!!r.sawBack, aiLow:numOrNull(r.aiLow), aiHigh:numOrNull(r.aiHigh), idWhy:String(r.idWhy || ""), valueWhy:String(r.valueWhy || ""), where:`${blobs.length} photos of one card`, photosSeen:blobs.length, comp:null, price:null};
       S.cards.push(c);
       ui.scanMsg = `Added ${title(c)} from ${blobs.length} photo${blobs.length === 1 ? "" : "s"} of one card.` + (files.length > RQ_MAX ? ` Only the first ${RQ_MAX} photos were used.` : "");
@@ -1380,6 +1395,7 @@ function rowSale(c){
     ${resultBox(c)}
     ${rqBox(c)}
     ${whyBox(c)}
+    ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
   </li>`;
 }
 function vSale(){
@@ -1562,13 +1578,14 @@ document.addEventListener("click", async e => {
   }
   else if(act === "ptagUndo" && ui.photo){ const t = ui.photo.tags.pop(); if(t && ui.photo.qi > 0 && photoQueue()[ui.photo.qi - 1] === t.text) ui.photo.qi--; ui.photo.out = null; return render(); }
   else if(act === "ptagClear" && ui.photo){ ui.photo.tags = []; ui.photo.qi = 0; ui.photo.out = null; return render(); }
-  else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = p.join(", "); c.flawsOk = true; }
-  else if(act === "flawBack" && c){ c.flaws = [...flawParts(c), el.dataset.v].join(", "); c.flawsOk = true; }
+  else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = joinFlaws(p); c.flawsOk = true; }
+  else if(act === "flawBack" && c){ c.flaws = joinFlaws([...flawParts(c), el.dataset.v]); c.flawsOk = true; }
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
   else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); (S.sales || []).forEach(saleSaved); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
   else if(act === "selAll"){ (ui.onlyCheck ? S.cards.filter(needsCheck) : toDecide()).forEach(x => ui.sel.add(x.id)); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
+  else if(act === "asLot"){ ui.undo = JSON.stringify(S); ui.cmdMsg = combineLot(); ui.selMsg = ""; ui.sel.clear(); }
   else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
     ui.selMsg = act === "asSingles" ? assignSingles() : act === "asYearLot" ? assignYearLots() : assignPage(numOrNull(ui.pagePrice));
     if(!ui.selMsg.startsWith("Enter")) ui.sel.clear();
@@ -1626,7 +1643,7 @@ document.addEventListener("change", e => {
   const li = t.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id), f = t.dataset.f;
   if(!c || !f) return;
   if(["comp","price","soldPrice"].includes(f)) c[f] = numOrNull(t.value);
-  else if(f === "flawAdd"){ if(t.value.trim()){ c.flaws = [...flawParts(c), t.value.trim()].join(", "); c.flawsOk = true; } }
+  else if(f === "flawAdd"){ if(t.value.trim()){ c.flaws = joinFlaws([...flawParts(c), t.value.trim()]); c.flawsOk = true; } }
   else if(f === "claimBy"){ c.claimBy = t.value.replace(/^u\//, "").trim(); if(c.claimBy && c.status === "open"){ c.status = "claimed"; c.claimAt = Date.now(); } }
   else if(f === "status"){
     const was = c.status; c.status = t.value;
