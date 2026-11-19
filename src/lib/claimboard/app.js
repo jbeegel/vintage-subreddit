@@ -912,25 +912,125 @@ function cmdBar(){
     ${ui.cmdMsg ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.cmdMsg)}</p>` : ""}</div>`;
 }
 
+/* ---------- sale photos: headline, notes, number and price tags and a username stamp drawn onto the picture ---------- */
+ui.photo = null;
+function photoTargets(){
+  const rows = ordered().filter(c => priceOf(c) != null || c.status !== "open"), num = c => rows.indexOf(c) + 1;
+  const out = [{key:"", label:"Something else (type your own)", title:"", note:"", queue:[]}];
+  for(const s of [...new Set(rows.map(c => c.section || ""))]){
+    const list = rows.filter(c => (c.section || "") === s && c.status === "open"); if(!list.length) continue;
+    const page = list.every(c => c.pin === "page"), name = s || "Cards for sale";
+    out.push({key:"s:" + s, label:name + " (" + list.length + ")", title:page ? name.toUpperCase() : name, note:page ? list.length + " cards. Claim by number." : "Numbers match the price list.", queue:list.map(c => "#" + num(c) + (page ? "" : " " + money(priceOf(c))))});
+    for(const c of list) if(c.isLot) out.push({key:"l:" + c.id, label:"Lot: " + c.player, title:c.player, note:money(priceOf(c)) + " for the lot · #" + num(c) + " on the price list", queue:[]});
+  }
+  return out;
+}
+function setPhotoTarget(key){
+  const ph = ui.photo, t = photoTargets().find(x => x.key === key) || photoTargets()[0];
+  ph.key = t.key; ph.title = t.title; ph.note = t.note; ph.qi = 0; ph.tagText = null; ph.out = null;
+}
+const photoQueue = () => (photoTargets().find(x => x.key === ui.photo.key) || {queue:[]}).queue;
+const nextTag = () => ui.photo.tagText ?? photoQueue()[ui.photo.qi] ?? "";
+async function loadPhoto(file){
+  try{
+    const bmp = await createImageBitmap(file), k = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+    ui.photo = {bmp, w:Math.round(bmp.width * k), h:Math.round(bmp.height * k), tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
+    const first = photoTargets()[1]; setPhotoTarget(first ? first.key : "");
+  }catch(e){ ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
+  render();
+}
+function fitText(g, text, x, y, maxW, px, weight){
+  let size = px;
+  do { g.font = `${weight} ${size}px Archivo, "Arial Narrow", Arial, sans-serif`; size *= .94; } while(g.measureText(text).width > maxW && size > px * .4);
+  g.fillText(text, x, y);
+}
+function drawPhoto(){
+  const ph = ui.photo, cv = $("#pcanvas"); if(!ph || !cv) return;
+  cv.width = ph.w; cv.height = ph.h;
+  const g = cv.getContext("2d"), u = Math.max(ph.w, ph.h) / 100, pad = 1.6 * u;
+  g.drawImage(ph.bmp, 0, 0, ph.w, ph.h); g.textBaseline = "top";
+  if(ph.title || ph.note){
+    const hT = ph.title ? 4.4 * u : 0, hN = ph.note ? 2.6 * u : 0, H = pad * 2 + hT + hN + (hT && hN ? .8 * u : 0);
+    g.fillStyle = "rgba(10,18,15,.84)"; g.fillRect(0, 0, ph.w, H); g.fillStyle = "#fff";
+    if(ph.title) fitText(g, ph.title, pad, pad, ph.w - 2 * pad, hT, 800);
+    if(ph.note) fitText(g, ph.note, pad, pad + hT + (hT ? .8 * u : 0), ph.w - 2 * pad, hN, 500);
+  }
+  const stamp = [S.settings.handle ? "u/" + String(S.settings.handle).replace(/^u\//, "") : "", new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})].filter(Boolean).join(" · ");
+  g.font = `600 ${2.4 * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
+  const sw = g.measureText(stamp).width + 2 * u, sh = 4 * u;
+  g.fillStyle = "rgba(10,18,15,.84)"; g.fillRect(ph.w - sw, ph.h - sh, sw, sh); g.fillStyle = "#fff"; g.fillText(stamp, ph.w - sw + u, ph.h - sh + .8 * u);
+  for(const t of ph.tags){
+    g.font = `800 ${3 * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
+    const w = g.measureText(t.text).width + 1.8 * u, h = 4.6 * u, x = Math.min(ph.w - w, Math.max(0, t.x * ph.w - w / 2)), y = Math.min(ph.h - h, Math.max(0, t.y * ph.h - h / 2));
+    g.fillStyle = "#fff"; g.strokeStyle = "#0a120f"; g.lineWidth = .35 * u;
+    g.beginPath(); g.roundRect(x, y, w, h, .8 * u); g.fill(); g.stroke();
+    g.fillStyle = "#0a120f"; g.fillText(t.text, x + .9 * u, y + .9 * u);
+  }
+}
+function photoTap(e){
+  const ph = ui.photo, text = String(nextTag()).trim(); if(!ph) return;
+  if(!text){ ph.msg = "Type what the tag should say first."; return render(); }
+  const r = e.target.getBoundingClientRect();
+  ph.tags.push({x:(e.clientX - r.left) / r.width, y:(e.clientY - r.top) / r.height, text});
+  if(ph.tagText == null) ph.qi++; else ph.tagText = null;
+  ph.out = null; ph.msg = ""; render();
+}
+async function savePhoto(){
+  const ph = ui.photo, cv = $("#pcanvas"); if(!ph || !cv) return;
+  const name = "sale-photo-" + (String(ph.title || "labeled").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "labeled") + ".jpg";
+  try{
+    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .92));
+    const file = new File([blob], name, {type: "image/jpeg"});
+    if(navigator.canShare && navigator.canShare({files: [file]})) await navigator.share({files: [file]});
+    else { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    ph.out = null; ph.msg = "Saved " + name + ".";
+  }catch(e){ ph.out = cv.toDataURL("image/jpeg", .9); ph.msg = "It could not be saved as a file here. Press and hold the copy below and choose Save."; }
+  render();
+}
+function vPhotos(){
+  const ph = ui.photo, ts = photoTargets();
+  return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
+    <p class="note">Take the picture, and the tool writes the headline, notes, numbers and prices onto it, with your username and today's date. No paper labels, no drawing on screenshots.</p>
+    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${ph ? "Use a different photo" : "Take or choose a photo"}</button>
+      ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
+    ${ph ? `<div class="two">
+      <label>This photo shows<select id="ph-target">${ts.map(t => `<option value="${esc(t.key)}" ${t.key === ph.key ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
+      <label>Your Reddit username, for the stamp<input id="set-handle" value="${esc(S.settings.handle || "")}" placeholder="username"></label>
+      <label>Headline<input id="ph-title" value="${esc(ph.title)}" placeholder="$10 PER CARD"></label>
+      <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
+    </div>
+    <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
+      <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
+    <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."}</p>
+    <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;cursor:crosshair;touch-action:manipulation" aria-label="Photo with labels. Tap to place the next tag."></canvas>
+    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><span class="note">${esc(ph.msg || "")}</span></div>
+    ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
+    <p class="note">A typed username and date may not count as proof of possession on every subreddit. Keep a handwritten note in the shot until the mods confirm a printed stamp is accepted.</p>` : ""}
+  </div></section>`;
+}
+
 /* ---------- render + events ---------- */
-const VIEWS = {inventory:vInventory, post:vPost, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
+const VIEWS = {inventory:vInventory, post:vPost, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
   const name = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "inventory";
   document.querySelectorAll("#nav a").forEach(a => a.getAttribute("href") === "#" + name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   $("#n-inv").textContent = S.cards.length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   $("#main").innerHTML = cmdBar() + VIEWS[name]();
+  if(name === "photos") drawPhoto();
   renderAuth();
   if(name === "sold" && ui.community == null && !ui.communityMsg) loadCommunity();
 }
 addEventListener("hashchange", render);
 
 document.addEventListener("click", async e => {
+  if(e.target.id === "pcanvas") return photoTap(e);
   const cp = e.target.closest("[data-copy]");
   if(cp){ const ta = $("#" + cp.dataset.copy); try{ await navigator.clipboard.writeText(ta.value); cp.textContent = "Copied"; }catch(_){ ta.focus(); ta.select(); cp.textContent = "Selected, press copy"; } return; }
   const el = e.target.closest("[data-act]"); if(!el) return;
   const act = el.dataset.act, li = el.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id);
   if(act === "pick") return $("#file").click();
+  if(act === "ppick") return $("#pfile").click();
   if(act === "gpick") return $("#gfile").click();
   if(act === "signin"){ const em = $("#auth-email").value.trim(); if(!em) return; ui.authMsg = "Sending"; const {error} = await cap.sb.auth.signInWithOtp({email: em, options:{emailRedirectTo: location.origin}}); ui.authMsg = error ? "Could not send: " + error.message : "Check your email for the link."; document.activeElement && document.activeElement.blur(); return renderAuth(); }
   if(act === "signout"){ await cap.sb.auth.signOut(); return; }
@@ -941,6 +1041,9 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ S.cards = S.cards.filter(x => x !== c); }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "psave") return savePhoto();
+  else if(act === "ptagUndo" && ui.photo){ const t = ui.photo.tags.pop(); if(t && ui.photo.qi > 0 && photoQueue()[ui.photo.qi - 1] === t.text) ui.photo.qi--; ui.photo.out = null; return render(); }
+  else if(act === "ptagClear" && ui.photo){ ui.photo.tags = []; ui.photo.qi = 0; ui.photo.out = null; return render(); }
   else if(act === "flawDrop" && c){ const p = flawParts(c); p.splice(+el.dataset.i, 1); c.flaws = p.join(", "); c.flawsOk = true; }
   else if(act === "flawBack" && c){ c.flaws = [...flawParts(c), el.dataset.v].join(", "); c.flawsOk = true; }
   else if(act === "flawOk" && c){ c.flawsOk = true; }
@@ -979,6 +1082,10 @@ document.addEventListener("change", e => {
   if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) scan(f); return; }
   if(t.dataset.sel){ if(t.checked) ui.sel.add(t.dataset.sel); else ui.sel.delete(t.dataset.sel); return render(); }
   if(t.id === "pageprice"){ ui.pagePrice = t.value; return; }
+  if(t.id === "pfile"){ const f = t.files[0]; t.value = ""; if(f) loadPhoto(f); return; }
+  if(t.id === "ph-target" && ui.photo){ setPhotoTarget(t.value); return render(); }
+  if((t.id === "ph-title" || t.id === "ph-note") && ui.photo){ ui.photo[t.id.slice(3)] = t.value; ui.photo.out = null; return render(); }
+  if(t.id === "ph-tag" && ui.photo){ ui.photo.tagText = t.value === (photoQueue()[ui.photo.qi] ?? "") ? null : t.value; return; }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }

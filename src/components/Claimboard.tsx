@@ -24,6 +24,7 @@ export default function Claimboard() {
           Inventory<span className="n" id="n-inv" />
         </a>
         <a href="#post">Post</a>
+        <a href="#photos">Photos</a>
         <a href="#claims">
           Claims<span className="n" id="n-claims" />
         </a>
