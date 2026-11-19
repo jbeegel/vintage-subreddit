@@ -242,24 +242,42 @@ function rowInv(c){
   </li>`;
 }
 
+/* Condition problems a buyer would want to know before claiming. Ordinary corner and edge wear is left to the grade. */
+const ISSUE = /creas|wrinkl|paper loss|writing|written|\bpen\b|\bink|pencil|\bmark|stain|trim|tape|pinhole|\bhole|\btear|torn|miscut|off[- ]?cent|\boc\b|\d{2}\/\d{2}|water|scuff|scratch|residue|glue|damage|\bbend|\bbent|chip|\bloss\b|fad(ed|ing)|tilt|diamond cut|rounded|\bding|wax|gum|skinned|rubber band|album|punch/i;
+const flawParts = c => String(c.flaws || "").split(/[,;.]\s*/).map(x => x.trim()).filter(Boolean);
+const issuesOf = c => c.isLot ? [] : flawParts(c).filter(x => ISSUE.test(x));
+const DEFAULT_COND_NOTE = "Every condition issue I can see is called out in bold and already priced in. Ask for more photos of anything before you claim.";
+function condCell(c, callout){
+  const clean = x => x.replace(/\|/g, "/");
+  if(!callout) return clean([c.grade, c.flaws].filter(Boolean).join(", "));
+  if(c.isLot){
+    const hit = c.members.filter(m => issuesOf(m).length), kinds = [...new Set(hit.flatMap(issuesOf))].slice(0, 3);
+    return clean([c.grade, c.flaws].filter(Boolean).join(", ") + (hit.length ? `. **${hit.length} of ${c.members.length} have visible issues (${kinds.join(", ")})**` : ""));
+  }
+  const iss = issuesOf(c), minor = flawParts(c).filter(x => !ISSUE.test(x));
+  return clean([c.grade, ...minor].filter(Boolean).join(", ") + (iss.length ? (c.grade || minor.length ? ". " : "") + "**" + iss.join(", ") + "**" : ""));
+}
 function buildPost(){
   const st = S.settings, rows = ordered().filter(c => priceOf(c) != null || c.status !== "open");
   const names = [...S.cards].sort((a, b) => (priceOf(b) || 0) - (priceOf(a) || 0)).slice(0, 3).map(c => [c.year, c.player].filter(Boolean).join(" "));
   const t = st.title.trim() || `[FS] ${names.join(", ")}${S.cards.length > 3 ? " and more" : ""} (${S.cards.length} lots)`;
-  const comps = st.showComps && rows.some(c => c.comp != null);
+  const comps = st.showComps && rows.some(c => c.comp != null), callout = st.callout !== false;
+  const flagged = rows.filter(c => c.status !== "sold" && (c.isLot ? c.members.some(m => issuesOf(m).length) : issuesOf(c).length)).length;
   let b = (st.intro ? st.intro + "\n\n" : "") + `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\n`;
   const head = `| # | Card | Condition | Price |${comps ? " Recent comp |" : ""}\n|:-|:-|:-|:-|${comps ? ":-|" : ""}\n`;
   rows.forEach((c, i) => {
     if(i === 0 || (c.section || "") !== (rows[i - 1].section || "")) b += (i ? "\n" : "") + (c.section ? "**" + c.section + "**\n\n" : i ? "**Other cards**\n\n" : "") + head;
-    const cond = [c.grade, c.flaws].filter(Boolean).join(", ").replace(/\|/g, "/"), name = title(c).replace(/\|/g, "/");
+    const cond = condCell(c, callout), name = title(c).replace(/\|/g, "/");
     const pr = c.status === "sold" ? "**SOLD**" : c.status === "claimed" ? `${money(priceOf(c))} (pending)` : money(priceOf(c));
     b += `| ${i + 1} | ${c.status === "sold" ? "~~" + name + "~~" : name} | ${cond} | ${pr} |${comps ? " " + (c.comp != null ? money(c.comp) + (c.compSrc && c.compSrc !== "example" ? " " + c.compSrc : "") : "") + " |" : ""}\n`;
   });
   if(comps) b += `\nPrices are about ${st.discount}% under the comp shown, since there are no platform fees here.\n`;
-  return {t, b, missing: S.cards.filter(c => c.status === "open" && priceOf(c) == null).length};
+  if(callout && flagged) b += `\n**Condition:** ${st.condNote ?? DEFAULT_COND_NOTE}\n`;
+  const backs = rows.filter(c => c.status === "open").reduce((a, c) => a + (c.isLot ? c.members.filter(m => m.needsBack).length : c.needsBack ? 1 : 0), 0);
+  return {t, b, flagged, backs, missing: S.cards.filter(c => c.status === "open" && priceOf(c) == null).length};
 }
 function vPost(){
-  const st = S.settings, {t, b, missing} = buildPost();
+  const st = S.settings, {t, b, missing, flagged, backs} = buildPost();
   return `<section class="view"><div class="two">
   <div class="panel"><h2>Post settings</h2>
     <label>Title (leave blank to build it from your top cards)<input id="set-title" value="${esc(st.title)}" placeholder="${esc(t)}"></label>
@@ -267,14 +285,18 @@ function vPost(){
     <label>Payment<input id="set-pay" value="${esc(st.pay)}"></label>
     <label>Shipping<input id="set-ship" value="${esc(st.ship)}"></label>
     <label class="inline"><input type="checkbox" id="set-showComps" ${st.showComps ? "checked" : ""}> Show the comp beside each price</label>
+    <label class="inline"><input type="checkbox" id="set-callout" ${st.callout !== false ? "checked" : ""}> Call out condition issues in bold</label>
+    ${st.callout !== false ? `<label>Condition line under the price list<input id="set-condNote" value="${esc(st.condNote ?? DEFAULT_COND_NOTE)}"></label>` : ""}
     ${S.plan && S.plan.photos.length ? `<h3>Photos to take</h3><ol style="margin:0;padding-left:20px">${S.plan.photos.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}
     <p class="note">Check the subreddit's current posting rules before you post. Title format and timestamp requirements are set by the mods, and this draft does not replace them.</p>
   </div>
   <div class="panel"><h2>Draft</h2>
     ${missing ? `<p class="flag">${missing} row${missing === 1 ? " has" : "s have"} no price and ${missing === 1 ? "is" : "are"} left out of the table.</p>` : ""}
+    ${st.callout !== false ? `<p class="note">${flagged ? flagged + " item" + (flagged === 1 ? " has" : "s have") + " a condition issue called out in bold." : "No condition issues were found to call out. If a card has one, add it under Edit details, Flaws."}</p>` : ""}
+    ${backs ? `<p class="flag">${backs} card${backs === 1 ? " has" : "s have"} not had the back checked. Look before you post: back damage is the issue buyers most often find undisclosed.</p>` : ""}
     <h3>Title</h3><textarea id="out-title" readonly style="min-height:44px">${esc(t)}</textarea>
     <div class="row"><button class="small" data-copy="out-title">Copy title</button></div>
-    <h3>Body, Reddit markdown</h3><textarea id="out-body" readonly style="min-height:260px">${esc(b)}</textarea>
+    <h3>Post body or price comment, Reddit markdown</h3><textarea id="out-body" readonly style="min-height:260px">${esc(b)}</textarea>
     <div class="row"><button class="primary" data-copy="out-body">Copy body</button><span class="note" id="copymsg"></span></div>
   </div></div></section>`;
 }

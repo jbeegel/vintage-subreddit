@@ -12,6 +12,7 @@ export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
 
 Rules:
 - Identify year and set from the card design. Give the card number only if you can read it or are confident of it from the set checklist. Otherwise use null.
+- "flaws" is what the seller will disclose to buyers, so be specific and say where: "crease lower left", "pen mark on back", "paper loss top edge", "65/35 left to right". List every issue you can see, most serious first. Do not write vague notes like "some wear".
 - Do not guess. If the photo is blurry, cropped or ambiguous, still list the card but lower "conf" and say why in "flaws".
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
 - "needsBack" is true when the back must be seen to confirm identity, variation or condition.
