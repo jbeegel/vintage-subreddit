@@ -15,6 +15,7 @@ Rules:
 - "flaws" is what the seller will disclose to buyers, so be specific and say where: "crease lower left", "pen mark on back", "paper loss top edge", "65/35 left to right". List every issue you can see, most serious first. Do not write vague notes like "some wear".
 - Do not guess. If the photo is blurry, cropped or ambiguous, still list the card but lower "conf" and say why in "flaws".
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
+- Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "needsBack" is true when the back must be seen to confirm identity, variation or condition.
 - "idWhy": one short sentence on what in the photo identifies the card (design, name on the card, number read or inferred).
 - "valueWhy": one short sentence giving the usual range for this card and how the condition you see moves it.
@@ -55,6 +56,7 @@ Organise every row so the post carries out the plan.
 - Order sections the way the plan says. Order singles by price, highest first, unless the plan says otherwise. "A page" of singles means roughly 9 to 18 cards.
 - If the plan is silent on something, choose what sells best: stars and Hall of Famers as singles, low-value commons bundled.
 - If the plan asks for per-card price pages (for example "$10 per card"), make one section per price with "perCard" set to that number and list its rows. Put a card on a page only when its own price is close to or below the page price. Never bury a card worth much more.
+- Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "title": under 120 characters, starts with "[FS]", names the best two or three cards and the shape of the sale.
 - "intro": one or two plain sentences on what is in the sale and how it is organised. No hype. Do not restate payment or shipping terms.
 - "photos": the photos to take, in order. Each entry says what it shows (which section, which cards or lots). At most 20 singles per photo so they stay legible. Lots fanned out with the best cards on top. Every photo includes a handwritten note with the seller's username and today's date.
@@ -80,6 +82,7 @@ Rules:
 - Use only ids that appear above. Never invent cards. Match what the seller means: "all the Ted Williams" means every row or inner card whose name is Ted Williams.
 - If the instruction is a question, or you cannot tell what they want, return no operations and answer or ask in "say".
 - Do only what was asked. Leave everything else alone.
+- Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "say": one or two plain sentences telling the seller what you did, with counts and prices.
 
 Operations:
@@ -119,6 +122,7 @@ ${JSON.stringify(front)}
 
 Use the back to confirm or correct the identification: the card number, the year (the last season in the stats line is usually the year before issue; use the copyright line if there is one), the set, the player and any variation.
 
+- Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - If the back clearly belongs to a different card than the front read, return {"matches":false} and nothing else.
 - "conf" is how sure you are of the identification now that you have seen both sides.
 - "idWhy": one short sentence naming what on the back settled it.
@@ -142,6 +146,7 @@ Look at every photo, then:
 - "flaws": every condition issue visible in any photo, specific and located, most serious first, for example "crease lower left", "pen mark on back", "paper loss top edge", "65/35 left to right". Do not write vague notes like "some wear".
 - "grade": the overall raw grade, or the label grade if the card is slabbed.
 - "aiLow" and "aiHigh": a rough USD range for what this exact card sells for in that condition, from your general knowledge of recent sales, or null if unsure. Price the copy in the photos, not a clean example.
+- Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "conf": how sure you are of the identification now. "sawBack": true when one of the photos shows the back.
 - "idWhy": one short sentence on what settled the identification. "valueWhy": one short sentence on the usual range and how condition moves it.
 - "summary": one or two plain sentences for the seller saying what changed and why, or that the photos confirm the inventory. If the seller asked something or disagreed, answer it here directly.

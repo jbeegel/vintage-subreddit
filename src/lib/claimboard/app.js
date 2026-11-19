@@ -199,66 +199,66 @@ async function scan(files){
 }
 
 /* ---------- views ---------- */
+function toDecide(){ return S.cards.filter(c => c.status === "open" && !c.isLot && !c.section); }
 function vInventory(){
-  const open = S.cards.filter(c => c.status !== "sold");
-  const total = S.cards.reduce((a, c) => a + (c.status !== "sold" ? (priceOf(c) || 0) : 0), 0);
-  const unpriced = open.filter(c => priceOf(c) == null).length;
-  const hasEx = S.cards.some(c => c.example);
+  if(ui.onlyCheck && !S.cards.some(needsCheck)) ui.onlyCheck = false;
+  const list = ui.onlyCheck ? ordered().filter(needsCheck) : ordered().filter(c => c.status === "open" && !c.isLot && !c.section);
+  const placed = S.cards.filter(c => !c.example && (c.status !== "open" || c.isLot || c.section)).length;
+  const hasEx = S.cards.some(c => c.example), any = S.cards.some(c => !c.example), all = list.length && list.every(x => ui.sel.has(x.id));
   return `<section class="view">
   <div class="panel">
-    <h2>Scan a table</h2>
-    <div class="drop">
-      <p class="grow">Drop in a short video sweep or a batch of photos. A video is cut down to its sharpest frames before anything is read, so move slowly and keep the cards flat.</p>
-      <div class="row">
-        <input type="file" id="file" accept="image/*,video/*" multiple hidden><input type="file" id="backfile" accept="image/*" multiple hidden>
-        <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Choose photos or video</button>
-        <button data-act="add">Add a row by hand</button>
-        <label class="inline"><input type="checkbox" id="onecard" ${ui.oneCard ? "checked" : ""}> These photos are all one card</label>
-      </div>
+    <h2>${any ? "Add more cards" : "Scan your cards"}</h2>
+    <div class="row">
+      <input type="file" id="file" accept="image/*,video/*" multiple hidden>
+      <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Take or choose photos</button>
+      <button class="small" data-act="add">Add a card by hand</button>
+      <label class="inline"><input type="checkbox" id="onecard" ${ui.oneCard ? "checked" : ""}> These photos are all one card</label>
     </div>
-    <p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works: a large photo is cut into full-detail crops and each crop is read. Use your phone's highest resolution, shoot straight down, avoid glare.")}</p>
+    ${ui.busy || ui.scanMsg || !any ? `<p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works. Shoot straight down at full resolution, without glare. A short video works too.")}</p>` : ""}
   </div>
   ${checkPanel()}
   ${groupPanel()}
   ${singlesPanel()}
-  ${planPanel()}
-  ${hasEx ? `<p class="flag">These rows are examples, including the comp figures. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
-  <div class="panel">
-    <div class="row" style="justify-content:space-between">
-      <h2>${S.cards.length} row${S.cards.length === 1 ? "" : "s"} <span class="note">${money(total) || "$0"} listed${unpriced ? ", " + unpriced + " unpriced" : ""}</span></h2>
-      <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <label class="inline">Price <input class="money" id="set-discount" type="number" min="0" max="60" value="${esc(S.settings.discount)}" style="width:60px">% under comp</label>
-    </div>
-    <p class="note">Each card shows a rough raw value for its condition and a suggested Reddit ask, which is that value less your discount. Tick cards to sell them as singles, bundle them into a year lot, or put them on a per-card price page. A sold comp or a typed ask replaces the estimate.</p>
-    <div class="row"><button class="small" data-act="selAll">${S.cards.length && S.cards.every(x => ui.sel.has(x.id)) ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}</div>
-    <ul class="cards">${ordered().filter(x => !ui.onlyCheck || needsCheck(x)).map(rowInv).join("") || `<li><span class="note">Nothing yet. Scan a table or add a row.</span></li>`}</ul>
+  ${hasEx ? `<p class="flag">These rows are examples. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
+  <div class="panel" id="decide">
+    <div class="row" style="justify-content:space-between"><h2>${ui.onlyCheck ? "Cards to check" : "To decide"} <span class="note">${list.length}</span></h2>
+      <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+    <p class="note">Give each card a place: a single, a price page or a lot. Placed cards move to the <a href="#sale">Sale tab</a>${placed ? `, which has ${placed} item${placed === 1 ? "" : "s"} so far` : ""}. Asks are firm: buyers claim at the price shown.</p>
+    ${list.length ? `<div class="row"><button class="small" data-act="selAll">${all ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}${ui.onlyCheck ? `<button class="small" data-act="allCards">Show every card to decide</button>` : ""}</div>` : ""}
+    <ul class="cards">${list.map(rowInv).join("") || `<li><span class="note">${any ? "Every card has a place. Check the Sale tab, then build the post." : "Nothing yet. Scan a photo to start."}</span></li>`}</ul>
     ${selBar()}
-  </div></section>`;
+  </div>
+  ${planFold()}
+  <details class="panel"><summary><strong>Pricing</strong></summary>
+    <label class="inline">Ask is <input class="money" id="set-discount" type="number" min="0" max="60" value="${esc(S.settings.discount)}" style="width:60px">% under the value or sold comp, because there are no fees on the sub.</label>
+  </details>
+  </section>`;
+}
+function planFold(){
+  const h = planPanel(), open = ui.planDraft != null || ui.planMsg ? "open" : "";
+  if(!h.startsWith('<div class="panel"><h2>Plan the sale</h2>')) return h;
+  return h.replace('<div class="panel"><h2>Plan the sale</h2>', `<details class="panel" ${open}><summary><strong>Or describe the whole sale in words</strong></summary>`).replace(/<\/div>\s*$/, "</details>");
 }
 function rowInv(c){
-  const low = (c.conf ?? 1) < .75, p = priceOf(c), mid = c.aiLow != null && c.aiHigh != null ? Math.round((c.aiLow + c.aiHigh) / 2) : null;
+  const p = priceOf(c), undecided = c.status === "open" && !c.isLot && !c.section, pend = c.flawsAI != null && !c.flawsOk && !c.isLot;
   return `<li data-id="${c.id}">
-    <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
-      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}${c.where ? " · " + esc(c.where) : ""}</div>
+    <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed</span>` : ""}${c.section ? ` <span class="chip ok">${esc(c.section)}</span>` : ""}</div>
+      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>
       ${valueLine(c)}${histLine(c)}</div></div>
-    <div class="nums">
-      <label>Sold comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label>
-      <label>Reddit ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label>
-      <button class="small danger" data-act="del" aria-label="Delete ${esc(title(c))}">Delete</button>
-    </div>
-    <div class="links">
-      ${c.isLot ? `<span class="chip ok">lot of ${c.members.length}</span><button class="small" data-act="unlot">Break lot apart</button>` : ""}
-      ${c.section ? `<span class="chip ok">${esc(c.section)}</span>` : c.pin === "single" ? `<span class="chip ok">set aside as a single</span>` : ""}
-      ${low ? `<span class="chip warn">low confidence ${Math.round((c.conf || 0) * 100)}%</span>` : ""}
-      ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
-      ${links(c)}
-    </div>
-    ${checkBox(c)}
+    <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
+    ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
+    ${needsCheck(c) ? checkBox(c) : ""}
+    ${resultBox(c)}
     ${rqBox(c)}
-    ${flawBox(c)}
-    ${whyBox(c)}
-    <details class="edit"><summary>Edit details</summary><div class="fields">
-      ${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}</div></details>
+    ${pend ? flawBox(c) : ""}
+    <details class="edit"><summary>More: comps, condition, why, edit, delete</summary>
+      <div class="fields"><label>Sold comp<input class="money" data-f="comp" inputmode="decimal" value="${c.comp ?? ""}" placeholder="$"></label></div>
+      <div class="links">${links(c)}</div>
+      ${pend ? "" : flawBox(c)}
+      ${whyBox(c)}
+      <div class="fields">${[["year","Year"],["set","Set"],["num","Card #"],["player","Player or lot name"],["variation","Variation"],["grade","Grade"],["flaws","Flaws"],["compSrc","Comp source"]].map(([f, l]) => `<label>${l}<input data-f="${f}" value="${esc(c[f] ?? "")}"></label>`).join("")}</div>
+      <div class="row"><button class="small danger" data-act="del" aria-label="Delete ${esc(title(c))}">Delete this card</button></div>
+    </details>
   </li>`;
 }
 
@@ -540,7 +540,7 @@ function flawBox(c){
       ${dropped.map(x => `<button class="chipbtn off" data-act="flawBack" data-v="${esc(x)}" aria-label="Restore note: ${esc(x)}">${esc(x)} +</button>`).join("")}
       <input data-f="flawAdd" placeholder="Add your own note" aria-label="Add a condition note" style="width:170px">
       ${pending ? `<button class="small" data-act="flawOk">Looks right</button>` : c.flawsOk ? `<span class="chip ok">condition confirmed</span>` : ""}
-      ${c.backSeen ? `<span class="chip ok">back checked</span>` : ""}${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}
+      ${c.backSeen ? `<span class="chip ok">back checked</span>` : ""}
     </div>`;
 }
 const unconfirmed = () => S.cards.filter(c => c.status === "open").reduce((a, c) => a + (c.isLot ? c.members : [c]).filter(m => m.flawsAI != null && !m.flawsOk).length, 0);
@@ -621,7 +621,7 @@ function groupSuggestions(){
 function groupPanel(){
   const gs = groupSuggestions(); if(!gs.length) return "";
   const d = Number(S.settings.lotDiscount ?? 10);
-  return `<div class="panel pick"><h2>Suggested groupings <span class="note">${gs.length}</span></h2>
+  return `<div class="panel pick" id="groups"><h2>Suggested groupings <span class="note">${gs.length}</span></h2>
     <p class="note">Cards that usually sell better together. Check the cards and the price, then make the lot in one tap. A card can show up in more than one suggestion until you choose.</p>
     <ul class="cards">${gs.slice(0, 8).map(g => {
       const sum = g.cards.reduce((a, c) => a + (priceOf(c) || 0), 0), un = g.cards.filter(c => priceOf(c) == null).length;
@@ -665,7 +665,7 @@ async function recheck(id){
     const card = {year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, flaws:c.flaws, valueLow:c.aiLow, valueHigh:c.aiHigh, soldComp:c.comp, ask:priceOf(c)};
     const r = await askOneCard(card, q.note, q.blobs);
     if(r.mixed){ q.msg = (r.summary ? String(r.summary) + " " : "") + "Nothing was changed. Remove the photos of the other card and try again."; ui.busy = ""; return render(); }
-    const before = title(c), n = q.blobs.length;
+    const before = title(c), n = q.blobs.length, b0 = checkSnap(c);
     for(const k of ["year", "set", "num", "player", "variation"]) if(r[k] != null && r[k] !== "") c[k] = r[k];
     if(typeof r.conf === "number") c.conf = r.conf;
     if(r.idWhy) c.idWhy = String(r.idWhy);
@@ -679,6 +679,7 @@ async function recheck(id){
     c.backMsg = `Rechecked with ${n} photo${n === 1 ? "" : "s"}. ` + (c.recheckSummary || (title(c) !== before ? "" : "The photos confirm it.")) + (title(c) !== before ? ` Now ${title(c)}.` : "") + (add.length ? ` New condition notes: ${add.join(", ")}.` : "");
     if(c.example) delete c.example;
     if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); }
+    c.lastCheck = {before:b0, after:checkSnap(c)}; c.checkSeen = false; ui.cmdMsg = title(c) + " rechecked. The result is on the card.";
     dropRq(id); save();
   }catch(e){ q.msg = "The recheck did not work: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
@@ -726,7 +727,8 @@ function relot(lot){
 function setAside(id, choice){
   const f = findCard(id); if(!f) return;
   f.c.pin = choice;
-  if(choice !== "single" || !f.lot) return;
+  if(choice !== "single") return;
+  if(!f.lot){ f.c.section = "Singles"; ensureSection("Singles"); return; }
   const lot = f.lot;
   lot.members = lot.members.filter(m => m !== f.c);
   let sec = "";
@@ -735,6 +737,7 @@ function setAside(id, choice){
     sec = firstSingle ? firstSingle.section : "Singles";
     if(!S.plan.sections.includes(sec)) S.plan.sections.unshift(sec);
   }
+  if(!sec){ sec = "Singles"; ensureSection(sec); }
   f.c.section = sec;
   if(lot.members.length < 2){ lot.members.forEach(m => { m.section = lot.section; }); S.cards.splice(S.cards.indexOf(lot), 1, ...lot.members); }
   else relot(lot);
@@ -810,7 +813,7 @@ function closeSale(){
   S.sales = [sale, ...(S.sales || [])];
   S.cards = S.cards.filter(c => c.status !== "sold" && !c.example);
   S.cards.forEach(c => { c.status = "open"; c.claimBy = ""; c.claimAt = null; c.backups = []; c.relist = (c.relist || 0) + 1; });
-  S.orders = {}; S.settings.title = "";
+  S.orders = {}; S.settings.title = ""; S.postedAt = null;
   saleSaved(sale);
   const sold = items.filter(i => i.sold != null).length;
   return `Saved. ${sold} of ${items.length} sold. ${S.cards.length} unsold item${S.cards.length === 1 ? " stays" : "s stay"} in your inventory for next time.`;
@@ -1353,14 +1356,86 @@ function vPhotos(){
   </div></section>`;
 }
 
+/* ---------- guided flow: where the sale stands, what to do next, and the sale as it is being built ---------- */
+const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+const inSale = c => !c.example && (c.status !== "open" || c.isLot || !!c.section);
+function checkSnap(c){ return {t:title(c), grade:c.grade || "", val:c.aiLow != null && c.aiHigh != null ? money(c.aiLow) + " to " + money(c.aiHigh) : "", ask:money(priceOf(c)) || ""}; }
+function resultBox(c){
+  if(c.isLot || !c.photosSeen || c.checkSeen) return "";
+  const L = c.lastCheck, row = (k, a, b) => a === b ? "" : `<li>${k}: ${esc(a || "none")} → <strong>${esc(b || "none")}</strong></li>`;
+  const changes = L ? row("Card", L.before.t, L.after.t) + row("Grade", L.before.grade, L.after.grade) + row("Value", L.before.val, L.after.val) + row("Ask", L.before.ask, L.after.ask) : "";
+  const basis = basisOf(c), auto = basis != null ? roundP(basis * (1 - (Number(S.settings.discount) || 0) / 100)) : null;
+  return `<div class="check result"><span><strong>Recheck applied</strong> from ${plural(c.photosSeen, "photo", "photos")}.${c.recheckNote ? " You asked: " + esc(c.recheckNote) : ""}</span>
+    ${changes ? `<ul class="chg">${changes}</ul>` : L ? `<span>Nothing changed. The photos confirm what was there.</span>` : ""}
+    ${c.recheckSummary ? `<span>${esc(c.recheckSummary)}</span>` : ""}
+    <span>Now: ${esc(c.grade || "no grade")} · value ${esc(c.aiLow != null && c.aiHigh != null ? money(c.aiLow) + " to " + money(c.aiHigh) : "not set")} · ask <strong>${esc(money(priceOf(c)) || "not set")}</strong></span>
+    <div class="row">${c.price != null && auto != null && auto !== c.price ? `<button class="small primary" data-act="useAuto">Use the new ask ${money(auto)}</button><span>Your typed ask of ${money(c.price)} was kept.</span>` : ""}<button class="small" data-act="checkSeen">Got it</button></div></div>`;
+}
+function rowSale(c){
+  const p = priceOf(c);
+  return `<li data-id="${c.id}"><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
+      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div></div>
+    <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}" ${c.status === "open" ? "" : "disabled"}></label>
+      ${c.status !== "open" ? "" : c.isLot ? `<button class="small" data-act="unlot">Break apart</button>` : `<button class="small" data-act="takeOut">Take out</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}`}</div>
+    ${resultBox(c)}
+    ${rqBox(c)}
+    ${whyBox(c)}
+  </li>`;
+}
+function vSale(){
+  const items = ordered().filter(inSale), secs = [...new Set(items.map(c => c.section || "Other cards"))];
+  const live = items.filter(c => c.status !== "sold"), total = live.reduce((a, c) => a + (priceOf(c) || 0), 0);
+  const cards = items.reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
+  return `<section class="view"><div class="panel"><h2>Your sale so far</h2>
+    <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
+    <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
+    ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
+    <div class="row"><a class="btn primary" href="#post">Build the post</a></div></div>
+    ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
+      return `<div class="panel"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
+      : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
+  </section>`;
+}
+function go(h, then){ if(location.hash === h) render(); else location.hash = h; if(then) setTimeout(then, 80); }
+function progressBar(){
+  const real = S.cards.filter(c => !c.example), checks = S.cards.filter(needsCheck).length, decide = toDecide().filter(c => !c.example).length;
+  const items = S.cards.filter(inSale), groups = groupSuggestions().length, claimed = S.cards.filter(c => c.status === "claimed").length, sold = S.cards.filter(c => c.status === "sold").length;
+  const toShip = shipOrders().filter(x => !x.o.shippedAt).length, total = items.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
+  const reviewed = real.length > 0 && !checks && !decide;
+  const steps = [
+    {k:"Scan", d:real.length > 0, t:real.length ? plural(real.reduce((a, c) => a + (c.isLot ? c.members.length : 1), 0), "card", "cards") : "not started", h:"#inventory"},
+    {k:"Review", d:reviewed, t:checks || decide ? [checks ? checks + " to check" : "", decide ? decide + " to decide" : ""].filter(Boolean).join(", ") : real.length ? "done" : "", h:"#inventory"},
+    {k:"Sale", d:reviewed && items.length > 0, t:items.length ? plural(items.length, "item", "items") + " · " + (money(total) || "$0") : "empty", h:"#sale"},
+    {k:"Post", d:!!S.postedAt, t:S.postedAt ? "posted" : "not yet", h:"#post"},
+    {k:"Claims", d:!!S.postedAt && sold > 0 && !claimed, t:claimed || sold ? [claimed ? claimed + " waiting" : "", sold ? sold + " paid" : ""].filter(Boolean).join(", ") : "none yet", h:"#claims"},
+    {k:"Ship", d:sold > 0 && !toShip, t:toShip ? toShip + " to ship" : sold ? "all shipped" : "", h:"#ship"},
+  ];
+  const cur = steps.findIndex(s => !s.d), view = location.hash.slice(1) || "inventory";
+  let next;
+  if(!real.length) next = ["Scan a photo of your cards.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}];
+  else if(checks) next = [`${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}];
+  else if(groups) next = [`${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}];
+  else if(decide) next = [`${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}];
+  else if(!S.postedAt) next = ["Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}];
+  else if(claimed) next = [`${plural(claimed, "claim is", "claims are")} waiting for payment.`, {href:"#claims", label:"Claims"}];
+  else if(toShip) next = [`${plural(toShip, "paid order", "paid orders")} to ship.`, {href:"#ship", label:"Ship"}];
+  else if(sold) next = ["Everything paid has shipped. Close out the sale on History when you are done.", {href:"#sold", label:"History"}];
+  else next = ["The post is out. Paste new comments on the Claims tab as claims come in.", {href:"#claims", label:"Claims"}];
+  const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
+  return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog"><ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
+    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span>${btn}</div></div>`;
+}
+
 /* ---------- render + events ---------- */
-const VIEWS = {inventory:vInventory, post:vPost, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
+const VIEWS = {inventory:vInventory, sale:vSale, post:vPost, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
   const name = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "inventory";
   document.querySelectorAll("#nav a").forEach(a => a.getAttribute("href") === "#" + name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-  $("#n-inv").textContent = S.cards.length || "";
+  $("#n-inv").textContent = toDecide().length || "";
+  const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
-  $("#main").innerHTML = cmdBar() + VIEWS[name]();
+  S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
+  $("#main").innerHTML = progressBar() + cmdBar() + VIEWS[name]();
   stat();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -1371,6 +1446,7 @@ addEventListener("hashchange", render);
 document.addEventListener("click", async e => {
   if(e.target.id === "pcanvas") return photoTap(e);
   const cp = e.target.closest("[data-copy]");
+  if(cp && cp.dataset.copy === "out-body" && !S.postedAt){ S.postedAt = Date.now(); save(); }
   if(cp){ const ta = $("#" + cp.dataset.copy); try{ await navigator.clipboard.writeText(ta.value); cp.textContent = "Copied"; }catch(_){ ta.focus(); ta.select(); cp.textContent = "Selected, press copy"; } return; }
   const el = e.target.closest("[data-act]"); if(!el) return;
   const act = el.dataset.act, li = el.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id);
@@ -1387,6 +1463,19 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => x !== c); ui.sel.delete(c.id); ui.cmdMsg = "Deleted " + title(c) + ". Undo brings it back."; }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "qSingle" || act === "qPage"){
+    if(!c) return; const keep = ui.sel; ui.sel = new Set([c.id]);
+    const m = act === "qSingle" ? assignSingles() : assignPage(numOrNull(ui.pagePrice) || 10);
+    ui.sel = keep; keep.delete(c.id); ui.cmdMsg = title(c) + (act === "qSingle" ? " is now a single." : " is on the " + c.section + " page.") + " It is on the Sale tab.";
+    if(m.startsWith("Enter")) ui.cmdMsg = m;
+  }
+  else if(act === "takeOut" && c){ detach(c); delete c.section; ui.cmdMsg = title(c) + " is back on the Review tab, waiting for a place."; }
+  else if(act === "checkSeen" && c){ c.checkSeen = true; }
+  else if(act === "useAuto" && c){ c.price = null; c.checkSeen = true; ui.cmdMsg = title(c) + " now asks " + money(priceOf(c)) + "."; }
+  else if(act === "showChecks"){ ui.onlyCheck = true; return go("#inventory", () => { const d = document.getElementById("decide"); if(d) d.scrollIntoView({behavior:"smooth"}); }); }
+  else if(act === "allCards"){ ui.onlyCheck = false; }
+  else if(act === "goGroups"){ ui.onlyCheck = false; return go("#inventory", () => { const d = document.getElementById("groups"); if(d) d.scrollIntoView({behavior:"smooth"}); }); }
+  else if(act === "goDecide"){ ui.onlyCheck = false; return go("#inventory", () => { const d = document.getElementById("decide"); if(d) d.scrollIntoView({behavior:"smooth"}); }); }
   else if(act === "grpMake" || act === "grpSkip"){
     const k = el.closest("[data-gkey]").dataset.gkey, g = groupSuggestions().find(x => x.key === k);
     if(g && act === "grpSkip") S.grpSkip = [...(S.grpSkip || []), k];
@@ -1428,7 +1517,7 @@ document.addEventListener("click", async e => {
   else if(act === "flawOk" && c){ c.flawsOk = true; }
   else if(act === "cmd") return runCmd();
   else if(act === "undo"){ S = merge(JSON.parse(ui.undo)); ui.undo = null; ui.cmdMsg = "Undone."; ui.sel.clear(); }
-  else if(act === "selAll"){ S.cards.forEach(x => ui.sel.add(x.id)); return render(); }
+  else if(act === "selAll"){ (ui.onlyCheck ? S.cards.filter(needsCheck) : toDecide()).forEach(x => ui.sel.add(x.id)); return render(); }
   else if(act === "selNone"){ ui.sel.clear(); return render(); }
   else if(act === "asSingles" || act === "asYearLot" || act === "asPage"){
     ui.selMsg = act === "asSingles" ? assignSingles() : act === "asYearLot" ? assignYearLots() : assignPage(numOrNull(ui.pagePrice));

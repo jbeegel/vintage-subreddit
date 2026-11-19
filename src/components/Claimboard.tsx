@@ -22,7 +22,10 @@ export default function Claimboard() {
       </header>
       <nav id="nav" aria-label="Sections">
         <a href="#inventory">
-          Inventory<span className="n" id="n-inv" />
+          Review<span className="n" id="n-inv" />
+        </a>
+        <a href="#sale">
+          Sale<span className="n" id="n-sale" />
         </a>
         <a href="#post">Post</a>
         <a href="#photos">Photos</a>
