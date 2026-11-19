@@ -53,6 +53,9 @@ details.why dd{margin:0;overflow-wrap:anywhere}
 .thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar button.danger,button.danger{border-color:var(--stamp);color:var(--stamp)}
 .bar button.danger{background:var(--bg)}
+.check{grid-column:1/-1;background:var(--warn-bg);border-radius:4px;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:8px}
+.check strong{color:var(--warn)}
+.check.ok{background:var(--ok-bg)}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}

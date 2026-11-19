@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -111,6 +111,22 @@ Return JSON only: {"items":[{"year":1958,"set":"Topps","num":"1","player":"Ted W
 
 Thread text:
 ${text}`;
+}
+
+export function backPrompt(front: unknown): string {
+  return `This photo is the BACK of a vintage baseball card. The front was read as:
+${JSON.stringify(front)}
+
+Use the back to confirm or correct the identification: the card number, the year (the last season in the stats line is usually the year before issue; use the copyright line if there is one), the set, the player and any variation.
+
+- If the back clearly belongs to a different card than the front read, return {"matches":false} and nothing else.
+- "conf" is how sure you are of the identification now that you have seen both sides.
+- "idWhy": one short sentence naming what on the back settled it.
+- "backFlaws": condition issues you can see on the back, specific and located, for example "pen mark on back", "paper loss on back upper right", "wax stain on back", "tape residue on back". Empty if none.
+- "grade": the overall raw grade now that both sides are known. Back damage lowers it.
+- "aiLow" and "aiHigh": a rough USD range for what this card sells for raw in that overall condition, from your general knowledge, or null if unsure. "valueWhy": one short sentence on the usual range and how condition moves it.
+
+Return JSON only: {"matches":true,"year":1958,"set":"Topps","num":"1","player":"Ted Williams","variation":null,"conf":0.97,"idWhy":"Card number 1 and a 1957 stats line on the back","backFlaws":["wax stain on back"],"grade":"Raw VG","aiLow":140,"aiHigh":200,"valueWhy":"VG copies usually sell around $200; the wax stain keeps it at the low end"}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.

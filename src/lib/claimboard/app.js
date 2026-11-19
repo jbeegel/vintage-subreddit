@@ -210,13 +210,14 @@ function vInventory(){
     <div class="drop">
       <p class="grow">Drop in a short video sweep or a batch of photos. A video is cut down to its sharpest frames before anything is read, so move slowly and keep the cards flat.</p>
       <div class="row">
-        <input type="file" id="file" accept="image/*,video/*" multiple hidden>
+        <input type="file" id="file" accept="image/*,video/*" multiple hidden><input type="file" id="backfile" accept="image/*" hidden>
         <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Choose photos or video</button>
         <button data-act="add">Add a row by hand</button>
       </div>
     </div>
     <p id="scanmsg" class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.scanMsg || "One photo of a whole table works: a large photo is cut into full-detail crops and each crop is read. Use your phone's highest resolution, shoot straight down, avoid glare.")}</p>
   </div>
+  ${checkPanel()}
   ${singlesPanel()}
   ${planPanel()}
   ${hasEx ? `<p class="flag">These rows are examples, including the comp figures. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
@@ -228,7 +229,7 @@ function vInventory(){
     </div>
     <p class="note">Each card shows a rough raw value for its condition and a suggested Reddit ask, which is that value less your discount. Tick cards to sell them as singles, bundle them into a year lot, or put them on a per-card price page. A sold comp or a typed ask replaces the estimate.</p>
     <div class="row"><button class="small" data-act="selAll">${S.cards.length && S.cards.every(x => ui.sel.has(x.id)) ? "All selected" : "Select all"}</button>${ui.sel.size ? `<button class="small" data-act="selNone">Clear selection</button>` : ""}</div>
-    <ul class="cards">${ordered().map(rowInv).join("") || `<li><span class="note">Nothing yet. Scan a table or add a row.</span></li>`}</ul>
+    <ul class="cards">${ordered().filter(x => !ui.onlyCheck || needsCheck(x)).map(rowInv).join("") || `<li><span class="note">Nothing yet. Scan a table or add a row.</span></li>`}</ul>
     ${selBar()}
   </div></section>`;
 }
@@ -250,6 +251,7 @@ function rowInv(c){
       ${c.needsBack ? `<span class="chip warn">check the back</span>` : ""}
       ${links(c)}
     </div>
+    ${checkBox(c)}
     ${flawBox(c)}
     ${whyBox(c)}
     <details class="edit"><summary>Edit details</summary><div class="fields">
@@ -309,6 +311,7 @@ function vPost(){
     ${missing ? `<p class="flag">${missing} row${missing === 1 ? " has" : "s have"} no price and ${missing === 1 ? "is" : "are"} left out of the table.</p>` : ""}
     ${st.callout !== false ? `<p class="note">${flagged ? flagged + " item" + (flagged === 1 ? " has" : "s have") + " a condition issue called out in bold." : "No condition issues were found to call out. If a card has one, add it under Edit details, Flaws."}</p>` : ""}
     ${unconfirmed() ? `<p class="flag">${unconfirmed()} card${unconfirmed() === 1 ? " has" : "s have"} condition notes suggested by the scan that you have not confirmed. Review them on the Inventory tab before posting.</p>` : ""}
+    ${S.cards.filter(needsCheck).length ? `<p class="flag">${S.cards.filter(needsCheck).length} card${S.cards.filter(needsCheck).length === 1 ? " has" : "s have"} an identification you have not confirmed. They are marked on the Inventory tab.</p>` : ""}
     ${backs ? `<p class="flag">${backs} card${backs === 1 ? " has" : "s have"} not had the back checked. Look before you post: back damage is the issue buyers most often find undisclosed.</p>` : ""}
     <h3>Title</h3><textarea id="out-title" readonly style="min-height:44px">${esc(t)}</textarea>
     <div class="row"><button class="small" data-copy="out-title">Copy title</button></div>
@@ -533,9 +536,67 @@ function flawBox(c){
       ${dropped.map(x => `<button class="chipbtn off" data-act="flawBack" data-v="${esc(x)}" aria-label="Restore note: ${esc(x)}">${esc(x)} +</button>`).join("")}
       <input data-f="flawAdd" placeholder="Add your own note" aria-label="Add a condition note" style="width:170px">
       ${pending ? `<button class="small" data-act="flawOk">Looks right</button>` : c.flawsOk ? `<span class="chip ok">condition confirmed</span>` : ""}
+      ${c.backSeen ? `<span class="chip ok">back checked</span>` : c.flawsAI != null && !needsCheck(c) ? `<button class="small" data-act="backPick">Add back photo</button>` : ""}
     </div>`;
 }
 const unconfirmed = () => S.cards.filter(c => c.status === "open").reduce((a, c) => a + (c.isLot ? c.members : [c]).filter(m => m.flawsAI != null && !m.flawsOk).length, 0);
+
+/* ---------- identification checks: unsure reads are flagged, and a back photo or a typed fix settles them ---------- */
+function checkReasons(c){
+  const out = [];
+  if(c.isLot || c.status !== "open" || c.idOk || c.flawsAI == null) return out;
+  if((c.conf ?? 1) < .75) out.push(`the scan is only ${Math.round((c.conf || 0) * 100)}% sure what this is`);
+  if(c.needsBack) out.push("the back is needed to confirm it");
+  if(!c.year) out.push("the year could not be read");
+  if(!c.player) out.push("the player could not be read");
+  return out;
+}
+const needsCheck = c => checkReasons(c).length > 0;
+function checkBox(c){
+  const why = checkReasons(c);
+  if(!why.length) return c.backMsg ? `<div class="check ok"><span>${esc(c.backMsg)}</span></div>` : "";
+  return `<div class="check"><span><strong>Check this card:</strong> ${esc(why.join(", "))}.${c.num ? "" : " The card number was not read."} Add a photo of the back, fix the details here, or confirm it.</span>
+      <div class="row"><button class="small primary" data-act="backPick" ${ui.busy ? "disabled" : ""}>Add back photo</button>
+        <label>Year<input data-f="year" inputmode="numeric" value="${esc(c.year ?? "")}" style="width:72px"></label>
+        <label>Card #<input data-f="num" value="${esc(c.num ?? "")}" style="width:72px"></label>
+        <label class="grow">Player<input data-f="player" value="${esc(c.player ?? "")}"></label>
+        <button class="small" data-act="idOk">It is right</button></div>
+      ${c.backMsg ? `<span>${esc(c.backMsg)}</span>` : ""}</div>`;
+}
+function checkPanel(){
+  const n = S.cards.filter(needsCheck).length;
+  if(!n){ ui.onlyCheck = false; return ""; }
+  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>${n} card${n === 1 ? " needs" : "s need"} a check</h2>
+    <label class="inline"><input type="checkbox" id="onlycheck" ${ui.onlyCheck ? "checked" : ""}> Show only these</label></div>
+    <p class="note">The scan was not sure what these are, or needs the back to tell. Each one is marked in the list below. Add a back photo, fix the year and number, or confirm it is right.</p></div>`;
+}
+async function readBack(file, id){
+  const f = findCard(id); if(!f) return;
+  const c = f.c;
+  if(!cap.ai){ c.backMsg = aiOff(); return render(); }
+  ui.busy = "Reading the back"; c.backMsg = "Reading the back"; render();
+  try{
+    const img = await shrink(file), front = {year:c.year, set:c.set, num:c.num, player:c.player, variation:c.variation, grade:c.grade, flaws:c.flaws};
+    const r = (await ai("back", {front}, [img])) || {};
+    if(r.matches === false) c.backMsg = "That back does not look like the same card as the front, so nothing was changed.";
+    else {
+      const before = title(c);
+      for(const k of ["year", "set", "num", "player", "variation"]) if(r[k] != null && r[k] !== "") c[k] = r[k];
+      if(typeof r.conf === "number") c.conf = r.conf;
+      if(r.idWhy) c.idWhy = String(r.idWhy);
+      if(r.grade) c.grade = String(r.grade);
+      if(r.aiLow != null && r.aiHigh != null){ c.aiLow = numOrNull(r.aiLow); c.aiHigh = numOrNull(r.aiHigh); if(r.valueWhy) c.valueWhy = String(r.valueWhy); }
+      const have = flawParts(c).map(x => x.toLowerCase()), add = (Array.isArray(r.backFlaws) ? r.backFlaws : []).map(String).filter(x => x && !have.includes(x.toLowerCase()));
+      if(add.length){ c.flaws = [...flawParts(c), ...add].join(", "); c.flawsAI = [...flawParts({flaws:c.flawsAI}), ...add].join(", "); c.flawsOk = false; }
+      c.needsBack = false; c.backSeen = true; c.idOk = (c.conf ?? 0) >= .75;
+      c.backMsg = (title(c) !== before ? `The back changed this to ${title(c)}.` : "The back confirms it.") + (add.length ? ` New condition notes from the back: ${add.join(", ")}.` : "") + (c.idOk ? "" : " It is still not certain, so check the details.");
+      if(c.example) delete c.example;
+      if(f.lot){ if(f.lot.manual) describeLot(f.lot); relot(f.lot); }
+      save();
+    }
+  }catch(e){ c.backMsg = "The back could not be read: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
 
 /* ---------- single suggestions: cards worth selling alone are pulled out for a one-tap decision ---------- */
 const singleMin = () => Number(S.settings.singleMin ?? 20) || 0;
@@ -1210,6 +1271,7 @@ document.addEventListener("click", async e => {
   const el = e.target.closest("[data-act]"); if(!el) return;
   const act = el.dataset.act, li = el.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id);
   if(act === "pick") return $("#file").click();
+  if(act === "backPick"){ const row = el.closest("li[data-id]"); if(row){ ui.backFor = row.dataset.id; $("#backfile").click(); } return; }
   if(act === "ppick") return $("#pfile").click();
   if(act === "gpick") return $("#gfile").click();
   if(act === "signin"){ const em = $("#auth-email").value.trim(); if(!em) return; ui.authMsg = "Sending"; const {error} = await cap.sb.auth.signInWithOtp({email: em, options:{emailRedirectTo: location.origin}}); ui.authMsg = error ? "Could not send: " + error.message : "Check your email for the link."; document.activeElement && document.activeElement.blur(); return renderAuth(); }
@@ -1221,6 +1283,7 @@ document.addEventListener("click", async e => {
   else if(act === "del" && c){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => x !== c); ui.sel.delete(c.id); ui.cmdMsg = "Deleted " + title(c) + ". Undo brings it back."; }
   else if(act === "match") return matchClaims();
   else if(act === "plan") return runPlan();
+  else if(act === "idOk" && c){ c.idOk = true; c.backMsg = ""; }
   else if(act === "delSel"){
     const gone = S.cards.filter(x => ui.sel.has(x.id));
     if(gone.length){ ui.undo = JSON.stringify(S); S.cards = S.cards.filter(x => !ui.sel.has(x.id)); ui.selMsg = ""; ui.cmdMsg = `Deleted ${gone.length} item${gone.length === 1 ? "" : "s"}. Undo brings ${gone.length === 1 ? "it" : "them"} back.`; }
@@ -1284,6 +1347,8 @@ document.addEventListener("change", e => {
   if(t.id === "ph-target" && ui.photo){ setPhotoTarget(t.value); return render(); }
   if((t.id === "ph-title" || t.id === "ph-note") && ui.photo){ ui.photo[t.id.slice(3)] = t.value; ui.photo.out = null; return render(); }
   if(t.id === "ph-tag" && ui.photo){ ui.photo.tagText = t.value === (photoQueue()[ui.photo.qi] ?? "") ? null : t.value; return; }
+  if(t.id === "backfile"){ const f = t.files[0]; t.value = ""; if(f && ui.backFor) readBack(f, ui.backFor); return; }
+  if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.id === "plantext"){ ui.planDraft = t.value; return; }
   if(t.id === "q") { ui.q = t.value; return render(); }
   if(t.id === "gfile"){ for(const f of t.files) ui.pending.push({id:uid(), file:f, name:f.name, truth:null}); t.value = ""; ui.gradeMsg = ""; return render(); }
