@@ -17,6 +17,7 @@ Rules:
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
 - Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "needsBack" is true when the back must be seen to confirm identity, variation or condition.
+- "box": where the card sits in its image: {"img":1,"x0":0.12,"y0":0.40,"x1":0.21,"y1":0.58}. "img" is the image number in the order attached; the rest are fractions of that image's width and height from the top-left corner. Box the card itself, or the whole holder for a slab.
 - "notes": any handwritten or printed note in the photos other than the seller's username and date, word for word, with what it seems to refer to, for example a count like "120 cards" beside a stack, or a price. Return them as a top-level "notes" list.
 - "idWhy": one short sentence on what in the photo identifies the card (design, name on the card, number read or inferred).
 - "valueWhy": one short sentence giving the usual range for this card and how the condition you see moves it.
@@ -225,6 +226,7 @@ For each item:
 ${web ? "- Search the web for recent sold prices of this exact card in comparable condition: eBay sold listings, 130point, SportsCardsPro, and PSA auction prices for graded cards. Prefer sales from the last six months. Use as few searches as you need; a lot of commons or a cheap card does not need one." : "- Use your general knowledge of recent sold prices. You cannot search the web here, so say \"general knowledge\" as the source."}
 - Weigh the seller's own past sales and the collected subreddit prices above other prices when they exist, because they show what actually sells here.
 - Judge every comp against this card's own condition: its grade, condition notes and condition history. A sold price for a clean copy does not apply to a creased, trimmed or worn one. Say which condition your evidence is for.
+- "sellerNote" is the seller's own context about the card from having it in hand. Take it seriously.
 - Respect why the ask is what it is: "askSet" says where it came from. When the seller typed it, or it is low because of condition, only suggest a change when sales for this condition clearly disagree, and say so plainly. For a card on a per-card price page, "raise" means it is worth taking off the page; suggest the single ask it would get.
 - "verdict": "ok" if the ask is within about 15% of where it should be, "raise" if it is clearly too low, "lower" if it is clearly too high to sell.
 - "suggest": the ask you recommend, rounded the way sellers do: $1 steps under $25, $5 steps above.

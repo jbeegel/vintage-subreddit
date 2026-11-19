@@ -175,9 +175,9 @@ async function scan(files, opts){
   const set = m => { ui.busy = m; const el = $("#scanmsg"); if(el){ el.textContent = m; el.className = "progress busy"; } };
   try{
     const isVideo = files.length === 1 && files[0].type.startsWith("video/");
-    let blobs = [], tiled = false;
+    let blobs = [], tiled = false; const srcs = [];
     if(isVideo) blobs = await framesFromVideo(files[0], set);
-    else for(let i = 0; i < files.length; i++){ set(`Preparing photo ${i + 1} of ${files.length}`); const t = ui.manyCards ? await tiles(files[i]) : [await shrink(files[i], 1568)]; if(t.length > 1) tiled = true; blobs.push(...t); }
+    else for(let i = 0; i < files.length; i++){ set(`Preparing photo ${i + 1} of ${files.length}`); const t = ui.manyCards ? await tiles(files[i]) : [await shrink(files[i], 1568)]; if(t.length > 1) tiled = true; blobs.push(...t); srcs.push(...(t.length > 1 ? t : [files[i]])); }
     const per = 3; /* keeps each upload under the 4.5 MB request limit common on serverless hosts */
     const batches = []; for(let i = 0; i < blobs.length; i += per) batches.push(blobs.slice(i, i + per));
     const prior = S.cards.flatMap(c => c.isLot ? c.members : [c]).filter(c => !c.example), dn = v => String(v ?? "").trim().toLowerCase();
@@ -187,17 +187,19 @@ async function scan(files, opts){
     const tick = () => { const secs = Math.round((Date.now() - t0) / 1000), left = done ? Math.max(0, Math.round((Date.now() - t0) / done * (batches.length - done) / Math.min(3, batches.length - done || 1) / 1000)) : 0;
       set(`Identifying cards: ${done} of ${plural(batches.length, "batch", "batches")} done, ${plural(added, "card", "cards")} found so far · ${secs}s${done && done < batches.length ? `, about ${left}s left` : batches.length > 1 && !done ? ", the first results take about a minute" : ""}`); };
     const timer = setInterval(tick, 1000); tick();
-    const take = r => {
+    const srcIds = blobs.map(() => uid()), kept = new Set();
+    const keepSrc = i => { if(isVideo || i < 0 || i >= srcs.length || kept.has(i)) return null; kept.add(i); idb("put", {id:srcIds[i], scan:true, at:Date.now(), blob:srcs[i]}); return srcIds[i]; };
+    const take = (r, off) => {
       for(const n of (r && Array.isArray(r.notes) ? r.notes : [])) if(n && n.text) addPhotoNote(String(n.text), String(n.about || ""));
       for(const c of (r && r.cards) || []){
         const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
         if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null, dupOf:isVideo ? undefined : (twinOf(c) || {}).id, condLog:[{at:Date.now(), src:"scan", grade:c.grade ?? "", notes:c.flaws ?? ""}]});
+        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null, dupOf:isVideo ? undefined : (twinOf(c) || {}).id, condLog:[{at:Date.now(), src:"scan", grade:c.grade ?? "", notes:c.flaws ?? ""}], src:(() => { const b = c.box, i = (off || 0) + (Number(b && b.img) || 1) - 1; return b && b.x1 > b.x0 && b.y1 > b.y0 && !isVideo && srcs[i] ? {scan:keepSrc(i) || srcIds[i], box:{x0:+b.x0, y0:+b.y0, x1:+b.x1, y1:+b.y1}} : undefined; })()});
         added++;
       }
     };
     /* three requests at a time; each batch's cards show up in Review as soon as it finishes */
-    const worker = async () => { while(next < batches.length){ const batch = batches[next++]; const r = await ai("scan", {video: isVideo, tiled, note:String(S.settings.scanNote || "")}, batch); take(r); done++; save(); render(); tick(); } };
+    const worker = async () => { while(next < batches.length){ const bi = next++, batch = batches[bi]; const r = await ai("scan", {video: isVideo, tiled, note:String(S.settings.scanNote || "")}, batch); take(r, bi * per); done++; save(); render(); tick(); } };
     try{ await Promise.all(Array.from({length:Math.min(3, batches.length)}, worker)); } finally { clearInterval(timer); }
     S.imgSeen = [...(S.imgSeen || []), ...hashes.filter(Boolean).map(h => ({h, at:Date.now(), cards:added}))].slice(-400);
     ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"} in ${plural(Math.max(1, Math.round((Date.now() - t0) / 1000)), "second", "seconds")}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
@@ -262,7 +264,7 @@ function rowInv(c){
     <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed</span>` : ""}${c.section ? ` <span class="chip ok">${esc(c.section)}</span>` : ""}</div>
       <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>
       ${hobbyLine(c)}${valueLine(c)}${histLine(c)}${pcLine(c)}</div></div>
-    <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
+    <div class="nums">${seeBtn(c)}<label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
     ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button><button class="small" data-act="pcOneRow" ${ui.busy ? "disabled" : ""}>${S.priceCheck && S.priceCheck.items[c.id] ? "Check again" : "Check price"}</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
     ${c.dupOf ? dupLine(c) : ""}
     ${needsCheck(c) ? checkBox(c) : ""}
@@ -841,7 +843,7 @@ function singlesPanel(){
       return `<li data-sid="${c.id}"><div><div class="ttl">${esc(title(c))} <span class="chip ok">${money(priceOf(c))}</span></div><div class="meta">${esc([c.grade, x.lot ? "now in " + x.lot.player : x.target ? "on its own; could anchor " + lotName : c.where].filter(Boolean).join(" · "))}</div>
         <div class="meta"><strong>Recommended: ${solo ? "sell it alone" : "keep it as the lot's anchor"}</strong>${a.strong ? "" : " (a close call)"}</div>
         ${a.why.length ? `<ul class="chg meta">${a.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</div>
-      <div class="nums"><label>Ask<input class="money" data-sask="${c.id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>
+      <div class="nums">${seeBtn(c)}<label>Ask<input class="money" data-sask="${c.id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>
         <button class="small" data-act="pcOne" data-cid="${c.id}" ${ui.busy ? "disabled" : ""}>${S.priceCheck && S.priceCheck.items[c.id] ? "Check again" : "Check this price"}</button>
         ${(() => { const r = S.priceCheck && S.priceCheck.items[c.id]; return r && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(c) ? `<button class="small" data-act="pPcUse" data-cid="${c.id}" data-v="${Number(r.suggest)}">Use ${money(Number(r.suggest))}</button>` : r ? `<span class="chip ok">check: ask looks right</span>` : ""; })()}
         <button class="${solo ? "primary" : "small"}" data-act="single">Sell alone at ${money(priceOf(c))}${x.lot ? a.without != null ? `, lot becomes ${money(a.without)}` : ", the rest go loose" : ""}</button>
@@ -1325,9 +1327,9 @@ function idb(op, arg){
       open.onerror = () => res(null);
       open.onsuccess = () => {
         try{
-          const db = open.result, tx = db.transaction("photos", op === "all" ? "readonly" : "readwrite"), st = tx.objectStore("photos");
-          const rq = op === "all" ? st.getAll() : op === "put" ? st.put(arg) : st.delete(arg);
-          tx.oncomplete = () => { res(op === "all" ? rq.result : true); db.close(); };
+          const db = open.result, tx = db.transaction("photos", op === "all" || op === "get" ? "readonly" : "readwrite"), st = tx.objectStore("photos");
+          const rq = op === "all" ? st.getAll() : op === "get" ? st.get(arg) : op === "put" ? st.put(arg) : st.delete(arg);
+          tx.oncomplete = () => { res(op === "all" || op === "get" ? rq.result : true); db.close(); };
           tx.onerror = tx.onabort = () => { res(null); db.close(); };
         }catch(e){ res(null); }
       };
@@ -1342,7 +1344,7 @@ function keepPhoto(){
 async function loadPhotos(){
   const all = await idb("all");
   const mem = ui.photos || [], have = new Set(mem.map(x => x.id));
-  ui.photos = [...mem, ...(all || []).filter(r => !have.has(r.id)).map(r => ({...r, tagText:null, out:null, msg:""}))].sort((a, b) => (a.ord ?? a.at) - (b.ord ?? b.at));
+  ui.photos = [...mem, ...(all || []).filter(r => !have.has(r.id) && !r.scan).map(r => ({...r, tagText:null, out:null, msg:""}))].sort((a, b) => (a.ord ?? a.at) - (b.ord ?? b.at));
   ui.photoKept = all != null;
   if(location.hash === "#photos") render();
 }
@@ -1821,6 +1823,7 @@ async function autoPrice(){
       const m = match(f), mid = f.aiLow != null && f.aiHigh != null ? (Number(f.aiLow) + Number(f.aiHigh)) / 2 : null;
       return {id:"p" + i, box:f.box, name:[f.year, f.set, f.num ? "#" + f.num : "", f.player].filter(Boolean).join(" "), f, invId:m ? m.c.id : null, matched:!!m, inLot:m && m.lot ? m.lot.id : null, price:null, est:mid != null ? roundP(mid * (1 - disc / 100)) : null};
     });
+    ph.cards.forEach(pc => { const f = pc.invId && findCard(pc.invId); if(f && !(f.c.src && f.c.src.box)) f.c.src = {photo:ph.id, box:pc.box}; });
     const byLot = new Map();
     ph.cards.forEach(pc => { if(pc.inLot){ if(!byLot.has(pc.inLot)) byLot.set(pc.inLot, []); byLot.get(pc.inLot).push(pc.id); } });
     ph.groups = [...byLot].map(([lotId, ids], i) => ({id:"g" + i, ids, lotId, price:null, label:""}));
@@ -1844,7 +1847,7 @@ function addFoundCards(){
     const same = sib.find(x => String(x.name || "").toLowerCase() === String(pc.name || "").toLowerCase() && !ph.cards.some(y => y !== pc && y.invId === x.invId));
     if(same){ pc.invId = same.invId; continue; }
     const f = pc.f || {}, fl = joinFlaws(flawList(f.flaws)), id = uid();
-    S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null, condLog:[{at:Date.now(), src:"sale photo", grade:f.grade ?? "", notes:fl}]});
+    S.cards.push({id, status:"open", year:f.year ?? "", set:f.set ?? "", num:f.num ?? "", player:f.player ?? "Unidentified card", variation:f.variation ?? "", grade:f.grade ?? "", flaws:fl, flawsAI:fl, conf:typeof f.conf === "number" ? f.conf : .5, needsBack:false, aiLow:numOrNull(f.aiLow), aiHigh:numOrNull(f.aiHigh), where:"from a sale photo", comp:null, price:pc.price ?? null, src:{photo:ph.id, box:pc.box}, condLog:[{at:Date.now(), src:"sale photo", grade:f.grade ?? "", notes:fl}]});
     pc.invId = id;
   }
   const made = ph.groups.filter(g => !g.lotId && mirrorGroup(g)).length;
@@ -1902,7 +1905,7 @@ function checkItems(only){
     const h = c.isLot ? null : historyFor(c);
     return {id:c.id, kind:c.isLot ? "lot" : c.pin === "page" ? "price page card" : "single", card:c.isLot ? c.player : lineName(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c),
       value:c.aiLow != null && c.aiHigh != null ? [c.aiLow, c.aiHigh] : null, soldComp:c.comp ?? null,
-      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined, count:c.isLot ? lotN(c) : undefined, different:c.isLot && c.unique ? c.unique : undefined, askSet:askSource(c), conditionHistory:c.isLot ? undefined : condHistory(c).slice(-6), recheck:c.recheckSummary || undefined, valueWhy:c.isLot ? undefined : c.valueWhy || undefined,
+      cards:c.isLot ? c.members.map(m => ({card:lineName(m), grade:m.grade || "", ask:priceOf(m)})) : undefined, count:c.isLot ? lotN(c) : undefined, different:c.isLot && c.unique ? c.unique : undefined, askSet:askSource(c), sellerNote:c.ctxNote || undefined, conditionHistory:c.isLot ? undefined : condHistory(c).slice(-6), recheck:c.recheckSummary || undefined, valueWhy:c.isLot ? undefined : c.valueWhy || undefined,
       mySales:h && h.mine.length ? h.mine.slice(0, 3).map(x => ({price:x.price, grade:x.grade, date:new Date(x.date).toISOString().slice(0, 10)})) : undefined,
       subPrices:h && h.sub.length ? h.sub.slice(0, 3).map(x => ({price:x.price, sold:x.sold, grade:x.grade})) : undefined};
   });
@@ -1949,7 +1952,7 @@ function priceCheckPanel(){
           <div class="ttl">${esc(title(c))} <span class="chip ${r.verdict === "raise" ? "ok" : "warn"}">${r.verdict === "raise" ? "raise" : "lower"}</span></div>
           <div class="meta">${esc([c.grade, c.isLot ? "" : condShort(c)].filter(Boolean).join(" · ") || "No condition recorded")}${page ? ` · on the ${esc(c.section || "price")} page` : ""}</div>
           <div class="meta">Ask ${money(priceOf(c))} → suggested <strong>${money(v)}</strong>. ${esc(r.why || "")}</div>${evidenceList(r)}</div></div>
-          <div class="nums"><label>Your ask<input class="money" data-sask="${c.id}" inputmode="decimal" placeholder="${priceOf(c)}"></label>
+          <div class="nums">${seeBtn(c)}<label>Your ask<input class="money" data-sask="${c.id}" inputmode="decimal" placeholder="${priceOf(c)}"></label>
             <button class="small primary" data-act="pcUse" data-v="${v}">${page && r.verdict === "raise" ? `Make it a single at ${money(v)}` : `Use ${money(v)}`}</button>${h !== v && h !== priceOf(c) ? `<button class="small" data-act="pcUse" data-v="${h}">Halfway ${money(h)}</button>` : ""}<button class="small" data-act="pcKeep">Keep ${money(priceOf(c))}</button></div></li>`; }).join("")}</ul>` : ""}
     ${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}
   </div>`;
@@ -2833,7 +2836,7 @@ function allCardsPanel(){
         <details class="edit"><summary>Edit details</summary><div class="fields">
           ${[["year", "Year", 70], ["set", "Set", 110], ["num", "Number", 70], ["player", "Player or title", 180], ["variation", "Variation", 120], ["grade", "Grade", 90]].map(([k, l]) => `<label>${l}<input data-ef="${k}" data-eid="${id}" value="${esc(c[k] ?? "")}"></label>`).join("")}
           <label style="flex-basis:100%">Condition notes<input data-ef="flaws" data-eid="${id}" value="${esc(c.flaws || "")}"></label></div></details></div>
-        <div class="nums">${x.lot ? "" : `<label>Ask<input class="money" data-ef="price" data-eid="${id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>`}
+        <div class="nums">${seeBtn(c)}${x.lot ? "" : `<label>Ask<input class="money" data-ef="price" data-eid="${id}" inputmode="decimal" value="${c.price ?? ""}" placeholder="${priceOf(c) ?? "$"}"></label>`}
           <select data-mv="${id}" aria-label="Move ${esc(title(c))}"><option value="">Move…</option><option value="decide">Back to To decide</option><option value="single">Make it a single</option><option value="page">Put on the ${money(page)} page</option>${lots.filter(l => l !== x.lot).map(l => `<option value="lot:${l.id}">Into ${esc(l.player.replace(/\s*\(\d+ cards?\)$/, ""))}</option>`).join("")}<option value="remove">Delete it</option></select></div></li>`; }).join("") || `<li><span class="note">Nothing matches.</span></li>`}</ul>
     ${shown.length > 150 ? `<p class="note">Showing 150 of ${shown.length}. Search to narrow it down.</p>` : ""}
   </details>`;
@@ -2888,6 +2891,47 @@ function overviewBox(){
     <div class="row"><button class="small primary" data-act="overview" ${ui.busy ? "disabled" : ""}>Adjust the sale</button>${ui.ovMsg ? `<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.cmdMsg || "")}</span>` : ""}</div></div>`;
 }
 
+/* ---------- see card: the card cropped from the full-resolution photo it came from ---------- */
+async function cardBlob(c){
+  const s = c && c.src; if(!s || !s.box) return null;
+  let blob = null;
+  if(s.photo){ const x = (ui.photos || []).find(p => p.id === s.photo); blob = x && x.blob; }
+  if(!blob){ const r = await idb("get", s.scan || s.photo); blob = r && r.blob; }
+  if(!blob) return null;
+  const bmp = await createImageBitmap(blob), b = s.box, px = (b.x1 - b.x0) * .08, py = (b.y1 - b.y0) * .08;
+  const x0 = Math.max(0, b.x0 - px), y0 = Math.max(0, b.y0 - py), x1 = Math.min(1, b.x1 + px), y1 = Math.min(1, b.y1 + py);
+  const sx = x0 * bmp.width, sy = y0 * bmp.height, sw = (x1 - x0) * bmp.width, sh = (y1 - y0) * bmp.height;
+  if(sw < 4 || sh < 4) return null;
+  const cv = document.createElement("canvas"); cv.width = Math.round(sw); cv.height = Math.round(sh);
+  cv.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  return new Promise(r => cv.toBlob(r, "image/jpeg", .95));
+}
+const seeBtn = c => c && c.src && c.src.box ? `<button class="small" data-act="viewCard" data-cid="${c.id}">See card</button>` : "";
+async function openCard(id){
+  const f = findCard(id); if(!f) return;
+  if(ui.viewer && ui.viewer.url) URL.revokeObjectURL(ui.viewer.url);
+  ui.viewer = {id, url:null, blob:null, msg:"Loading the card"}; ui.viewMsg = ""; render();
+  const b = await cardBlob(f.c).catch(() => null);
+  if(ui.viewer && ui.viewer.id === id){
+    ui.viewer.blob = b; ui.viewer.url = b ? URL.createObjectURL(b) : null;
+    ui.viewer.msg = b ? "" : "The photo this card came from is no longer on this device.";
+    render();
+  }
+}
+function viewerBox(){
+  const v = ui.viewer; if(!v) return ""; const f = findCard(v.id); if(!f){ ui.viewer = null; return ""; }
+  const c = f.c;
+  return `<div class="viewer" role="dialog" aria-modal="true" aria-label="${esc(title(c))}"><div class="vin">
+    <div class="row" style="justify-content:space-between"><strong>${esc(title(c))}</strong><button class="small" data-act="viewClose">Close</button></div>
+    <div class="meta">${esc([c.grade, condShort(c), money(priceOf(c)) ? "ask " + money(priceOf(c)) : "", f.lot ? "in " + f.lot.player : ""].filter(Boolean).join(" · "))}</div>
+    ${v.url ? `<img src="${v.url}" alt="${esc(title(c))}" class="vimg"><div class="row"><a class="btn small" href="${v.url}" target="_blank" rel="noopener">Open full size</a><span class="note">Pinch to zoom. Cut from your original photo at full resolution.</span></div>` : `<p class="note">${esc(v.msg || "")}</p>`}
+    <label>Your context for this card<textarea id="viewnote" style="min-height:70px;font-family:var(--body)" placeholder="The corners are sharper than the photo shows. It is the yellow-letter variation. There is a crease on the back.">${esc(c.ctxNote || "")}</textarea></label>
+    <div class="row"><button class="small primary" data-act="viewRecheck" ${v.blob && !ui.busy ? "" : "disabled"}>Recheck the card with this</button><button class="small" data-act="viewPrice" ${ui.busy ? "disabled" : ""}>Re-run the price check with this</button></div>
+    ${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ui.viewMsg ? `<p class="note">${esc(ui.viewMsg)}</p>` : ""}
+    ${(c.condLog || []).length ? `<details class="edit"><summary>Condition record</summary><ul class="chg meta">${condHistory(c).map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+  </div></div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2897,7 +2941,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
+  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + viewerBox() + goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
   stat(); buildJump();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -2976,6 +3020,10 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "viewCard") return openCard(el.dataset.cid);
+  else if(act === "viewClose"){ if(ui.viewer && ui.viewer.url) URL.revokeObjectURL(ui.viewer.url); ui.viewer = null; ui.viewMsg = ""; }
+  else if(act === "viewRecheck" && ui.viewer && ui.viewer.blob){ const id = ui.viewer.id, f = findCard(id); if(f){ if(f.c.ctxNote) logCond(f.c, "you", "", "context: " + f.c.ctxNote); ui.rq[id] = {blobs:[await shrink(ui.viewer.blob, 1568)], urls:[], note:f.c.ctxNote || "", msg:""}; await recheck(id); const g = findCard(id); ui.viewMsg = g ? g.c.backMsg || "Rechecked." : "Rechecked."; dropRq(id); } }
+  else if(act === "viewPrice" && ui.viewer){ const f = findCard(ui.viewer.id); if(f){ if(f.c.ctxNote) logCond(f.c, "you", "", "context: " + f.c.ctxNote); await runCheck([f.c], "here"); const r = S.priceCheck && S.priceCheck.items[f.c.id]; ui.viewMsg = r ? `Price check: ${Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(f.c) ? "suggests " + money(Number(r.suggest)) + ". " : "the ask looks right. "}${r.why || ""}` : ui.cmdMsg; } }
   else if(act === "pcSelAll"){ ui.pcOff = new Set(); }
   else if(act === "pcSelNone"){ ui.pcOff = new Set(S.cards.map(x => x.id)); }
   else if(act === "pcTick"){ const k = el.dataset.k; ui.pcOff = new Set(S.cards.filter(x => { const r = S.priceCheck && S.priceCheck.items[x.id]; return !r || r.verdict !== k; }).map(x => x.id)); }
@@ -3151,6 +3199,7 @@ document.addEventListener("change", e => {
   if(t.dataset.mv){ const to = t.value; if(to){ ui.cmdMsg = moveCard(t.dataset.mv, to); ui.dopen.allcards = true; save(); } return render(); }
   if(t.id === "acq"){ ui.acQ = t.value; ui.dopen.allcards = true; return render(); }
   if(t.dataset.pcsel){ ui.pcOff = ui.pcOff || new Set(); if(t.checked) ui.pcOff.delete(t.dataset.pcsel); else ui.pcOff.add(t.dataset.pcsel); return render(); }
+  if(t.id === "viewnote" && ui.viewer){ const f = findCard(ui.viewer.id); if(f){ f.c.ctxNote = t.value.trim(); save(); } return; }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
