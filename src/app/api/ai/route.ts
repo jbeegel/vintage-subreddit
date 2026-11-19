@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
-  else if (task === "locate") prompt = locatePrompt;
+  else if (task === "locate") prompt = locatePrompt(Array.isArray(payload.inv) ? payload.inv.slice(0, 600) : []);
   else if (task === "pricecheck") {
     const items = Array.isArray(payload.items) ? payload.items : [];
     if (!items.length || items.length > 30) return fail(400, "Send between 1 and 30 items to check.");
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
     const text = String(payload.text ?? "");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (!text || text.length > 2000 || rows.length > 2000) return fail(400, "The instruction is missing or the inventory is too large.");
-    prompt = editPrompt(text, rows, payload.settings ?? {});
+    prompt = editPrompt(text, rows, payload.settings ?? {}, String(payload.next ?? "").slice(0, 400));
   } else if (task === "plan") {
     const text = String(payload.text ?? "");
     const rows = Array.isArray(payload.rows) ? payload.rows : [];

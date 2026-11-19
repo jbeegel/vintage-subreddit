@@ -23,7 +23,7 @@ const EXAMPLES = [
 
 let S = { cards: EXAMPLES, solds: [], settings: {discount:15, pay:"PayPal G&S only", ship:"$5 BMWT. PWE $1 on cards under $20, at buyer's risk.", handle:"", title:"", intro:"Prices are shipped-separately. Claim in the comments, then DM. Timestamp photo in the gallery.", showComps:true, share:false, paypal:"", shipFee:5}, radar:{zip:"",radius:50,targets:"",sources:""}, updatedAt:0 };
 let cap = {ai:false, auth:false, sb:null, token:null, email:null};
-let ui = {busy:"", scanMsg:"", claimMsg:"", community:null, communityMsg:"", q:"", radarMsg:""};
+let ui = {dopen:{}, busy:"", scanMsg:"", claimMsg:"", community:null, communityMsg:"", q:"", radarMsg:""};
 
 function loadLocal(){ try{ const r = localStorage.getItem(LS_KEY); if(r){ const d = JSON.parse(r); if(d && Array.isArray(d.cards)) S = merge(d); } }catch(e){} }
 function merge(d){ return {...S, ...d, settings:{...S.settings, ...(d.settings||{})}, radar:{...S.radar, ...(d.radar||{})}}; }
@@ -1230,6 +1230,8 @@ function applyOps(ops){
         }
         n++;
       });
+    } else if(o.op === "skipStep"){
+      skipNext(); n++;
     } else if(o.op === "settings" && o.fields){
       const f = o.fields, st = S.settings;
       for(const k of ["discount","lotDiscount","singleMin","shipFee","pweMax"]) if(f[k] != null && !isNaN(Number(f[k]))) st[k] = Number(f[k]);
@@ -1248,7 +1250,7 @@ async function runCmd(){
   try{
     const rows = S.cards.map(c => ({id:c.id, card:title(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c), section:c.section || "", status:c.status, buyer:c.claimBy || "", inside:c.isLot ? c.members.map(m => ({id:m.id, card:title(m), grade:m.grade || "", ask:priceOf(m)})) : undefined}));
     const st = S.settings, settings = {discount:st.discount, lotDiscount:st.lotDiscount ?? 10, singleMin:st.singleMin ?? 20, shipFee:st.shipFee, pay:st.pay, ship:st.ship, title:st.title, intro:st.intro, sections:(S.plan && S.plan.sections) || []};
-    const r = (await ai("edit", {text, rows, settings})) || {};
+    const r = (await ai("edit", {text, rows, settings, next:ui.nextText || ""})) || {};
     const before = JSON.stringify(S), n = applyOps(r.ops);
     if(n){ ui.undo = before; ui.cmd = ""; ui.sel.clear(); save(); }
     ui.cmdMsg = !n && Array.isArray(r.ops) && r.ops.length ? "Nothing in your inventory matched that, so nothing changed." : r.say ? String(r.say) : n ? "Done." : "Nothing changed.";
@@ -1256,7 +1258,7 @@ async function runCmd(){
   ui.busy = ""; render();
 }
 function cmdBar(){
-  return `<div class="panel cmd"><div class="row"><input id="cmd" class="grow" value="${esc(ui.cmd)}" placeholder="Tell it what to change: put all the Ted Williams in one lot at $150" aria-label="Instruction" ${ui.busy ? "disabled" : ""}>
+  return `<div class="panel cmd"><div class="row"><input id="cmd" class="grow" value="${esc(ui.cmd)}" placeholder="Tell it what to change, or push back on the next step" aria-label="Instruction" ${ui.busy ? "disabled" : ""}>
     <button class="primary" data-act="cmd" ${ui.busy ? "disabled" : ""}>Do it</button>${ui.undo ? `<button class="small" data-act="undo">Undo</button>` : ""}</div>
     ${ui.cmdMsg ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.cmdMsg)}</p>` : ""}</div>`;
 }
@@ -1387,6 +1389,7 @@ function photoTap(e){
   if(ui.skipTap){ ui.skipTap = false; return; }
   if(ui.photoSelect) return;
   const ph = ui.photo, text = String(nextTag()).trim(); if(!ph) return;
+  if(ph.cards && ph.cards.length && !ui.dopen.ptag) return;
   if(!text){ ph.msg = "Type what the tag should say first."; return render(); }
   const r = e.target.getBoundingClientRect();
   ph.tags.push({x:(e.clientX - r.left) / r.width, y:(e.clientY - r.top) / r.height, text});
@@ -1406,30 +1409,37 @@ async function savePhoto(){
   render();
 }
 function vPhotos(){
-  const ph = ui.photo, ts = photoTargets();
+  const ph = ui.photo, ts = photoTargets(), n = (ui.photos || []).length, have = S.cards.filter(c => !c.example && c.status !== "sold").length;
+  const dk = (k, open) => `data-dk="${k}" ${(ui.dopen[k] ?? open) ? "open" : ""}`;
   return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
-    <p class="note">Take the picture, and the tool writes the headline, notes, numbers and prices onto it, with your username and today's date. No paper labels, no drawing on screenshots.</p>
-    ${(ui.photos || []).length > 1 ? `<div class="row"><button class="small" data-act="pSaveAll" ${ui.busy ? "disabled" : ""}>Save all ${ui.photos.length} in order</button><button class="small" data-act="pSaveAllPlain" ${ui.busy ? "disabled" : ""}>Save all without labels</button></div>` : ""}
-    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="primary" data-act="ppick">${(ui.photos || []).length ? "Add another photo" : "Take or choose a photo"}</button>${(ui.photos || []).length ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
+    <p class="note">${have ? "Take the picture and tap Price every card. Cards already in your Review list get the asks you set there, and anything new gets an estimate you can check." : "Take the picture and tap Price every card. The tool finds each card, estimates an ask and adds it to Review, so a sale can start from a photo."} Then type any change, like "the bottom row is one lot at $40".</p>
+    <div class="row"><input type="file" id="pfile" accept="image/*" hidden><button class="${ph ? "small" : "primary"}" data-act="ppick">${n ? "Add another photo" : "Take or choose a photo"}</button>${n ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
-    ${(ui.photos || []).length ? `<div class="row thumbs">${ui.photos.map((x, i) => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${i + 1}. ${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
+    ${n ? `<div class="row thumbs">${ui.photos.map((x, i) => `<button class="thumb ${ph && x.id === ph.id ? "on" : ""}" data-act="popen" data-pid="${x.id}" aria-label="Open photo: ${esc(x.title || "untitled")}"><img src="${thumbUrl(x)}" alt=""><span>${i + 1}. ${esc(x.title || "Untitled")}</span></button>`).join("")}</div>
+    ${n > 1 ? `<div class="row"><button class="small" data-act="pSaveAll" ${ui.busy ? "disabled" : ""}>Save all ${n} in order</button><button class="small" data-act="pSaveAllPlain" ${ui.busy ? "disabled" : ""}>Save all without labels</button></div>` : ""}
     <p class="note">${ui.photoKept === false ? "This browser would not store photos, so they last only until the page closes. Save each labeled photo before moving on." : "Photos and their labels are kept on this device until you delete them. They are not part of the account backup."}</p>` : ""}
-    ${ph ? `<div class="two">
+    ${ph ? `
+    <div class="row"><button class="${ph.cards ? "small" : "primary"}" data-act="pauto" ${ui.busy ? "disabled" : ""}>${ph.cards ? "Price every card again" : "Price every card"}</button>${ui.busy ? `<span class="progress busy">${esc(ui.busy)}</span>` : ""}</div>
+    <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;touch-action:manipulation" aria-label="Photo with price tags. Drag a tag to move it."></canvas>
+    ${photoSayBox(ph)}
+    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><button class="small" data-act="pMove" data-d="-1" ${(ui.photos || []).indexOf(ph) > 0 ? "" : "disabled"}>Move earlier</button><button class="small" data-act="pMove" data-d="1" ${(ui.photos || []).indexOf(ph) < n - 1 ? "" : "disabled"}>Move later</button><button class="small" data-act="pdel">Delete this photo</button></div>
+    ${orderAskBox()}
+    ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
+    ${photoAddBox(ph)}
+    ${photoHintBox(ph)}
+    ${photoList(ph)}
+    ${ph.cards && ph.cards.length ? `<details class="more" ${dk("psel", false)}><summary>Select tags by tapping</summary>${photoEditBox(ph)}</details>` : ""}
+    <details class="more" ${dk("ptag", !ph.cards)}><summary>Place tags by hand</summary>
+      <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="$25"></label>
+        <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
+      <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} While this is open, a tap on the photo places a tag.</p></details>
+    <details class="more" ${dk("plook", false)}><summary>Tag size and color</summary>${styleRow(ph)}</details>
+    <details class="more" ${dk("phead", false)}><summary>Headline, second line and username stamp</summary><div class="two">
       <label>This photo shows<select id="ph-target">${ts.map(t => `<option value="${esc(t.key)}" ${t.key === ph.key ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
       <label>Your Reddit username, for the stamp<input id="set-handle" value="${esc(S.settings.handle || "")}" placeholder="username"></label>
       <label>Headline<input id="ph-title" value="${esc(ph.title)}" placeholder="$10 PER CARD"></label>
       <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
-    </div>
-    <div class="row"><button class="primary" data-act="pauto" ${ui.busy ? "disabled" : ""}>Price every card automatically</button>${photoExtra(ph).length ? `<button class="small" data-act="pfoundAdd">Add the ${photoExtra(ph).length} new card${photoExtra(ph).length === 1 ? "" : "s"} to Review</button>` : ""}<span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || "Finds every card, matches it to your inventory and puts its ask under it.")}</span></div>
-    ${orderAskBox()}
-    ${styleRow(ph)}
-    ${photoEditBox(ph)}
-    <div class="row"><label class="grow">Next tag. Tap the photo to place it.<input id="ph-tag" value="${esc(nextTag())}" placeholder="#1 $25"></label>
-      <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
-    <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} Drag any tag to move it.</p>
-    <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;cursor:crosshair;touch-action:manipulation" aria-label="Photo with labels. Tap to place the next tag."></canvas>
-    <div class="row"><button class="primary" data-act="psave">Save labeled photo</button><button class="small" data-act="pMove" data-d="-1" ${(ui.photos || []).indexOf(ph) > 0 ? "" : "disabled"}>Move earlier</button><button class="small" data-act="pMove" data-d="1" ${(ui.photos || []).indexOf(ph) < (ui.photos || []).length - 1 ? "" : "disabled"}>Move later</button><button class="small" data-act="pdel">Delete this photo</button><span class="note">${esc(ph.msg || "")}</span></div>
-    ${ph.out ? `<img src="${ph.out}" alt="Labeled sale photo" style="border-radius:6px">` : ""}
+    </div></details>
     <p class="note">A typed username and date may not count as proof of possession on every subreddit. Keep a handwritten note in the shot until the mods confirm a printed stamp is accepted.</p>` : ""}
   </div></section>`;
 }
@@ -1491,20 +1501,26 @@ function progressBar(){
     {k:"Ship", d:sold > 0 && !toShip, t:toShip ? toShip + " to ship" : sold ? "all shipped" : "", h:"#ship"},
   ];
   const cur = steps.findIndex(s => !s.d), view = location.hash.slice(1) || "inventory";
-  let next;
-  if(!real.length) next = ["Scan a photo of your cards.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}];
-  else if(checks) next = [`${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}];
-  else if(groups) next = [`${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}];
-  else if(decide) next = [`${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}];
-  else if(!S.postedAt && !S.priceCheck && items.length) next = ["Everything has a place. Double-check the asks against recent sales before you post.", {act:"pcGo", label:"Double-check prices"}];
-  else if(!S.postedAt) next = ["Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}];
-  else if(claimed) next = [`${plural(claimed, "claim is", "claims are")} waiting for payment.`, {href:"#claims", label:"Claims"}];
-  else if(toShip) next = [`${plural(toShip, "paid order", "paid orders")} to ship.`, {href:"#ship", label:"Ship"}];
-  else if(sold) next = ["Everything paid has shipped. Close out the sale on History when you are done.", {href:"#sold", label:"History"}];
-  else next = ["The post is out. Paste new comments on the Claims tab as claims come in.", {href:"#claims", label:"Claims"}];
+  const unchecked = items.filter(c => c.status === "open" && !(S.priceCheck && S.priceCheck.items[c.id])).length, labeled = (ui.photos || []).filter(x => (x.tags || []).length).length;
+  const cands = [
+    ["scan", !real.length, 0, "Scan a photo of your cards, or start from a sale photo on the Photos tab.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}],
+    ["checks", checks, checks, `${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}],
+    ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
+    ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
+    ["pricecheck", !S.postedAt && unchecked, unchecked, `Double-check ${unchecked === items.filter(c => c.status === "open").length ? "the asks" : plural(unchecked, "ask", "asks")} against recent sales before you post.`, {act:"pcGo", label:"Double-check prices"}],
+    ["photos", !S.postedAt && items.length && !labeled, items.length, "Put the asks on your sale photos so buyers see every price.", {href:"#photos", label:"Label photos"}],
+    ["post", !S.postedAt, 0, "Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}],
+    ["claims", claimed, claimed, `${plural(claimed, "claim is", "claims are")} waiting for payment.`, {href:"#claims", label:"Claims"}],
+    ["ship", toShip, toShip, `${plural(toShip, "paid order", "paid orders")} to ship.`, {href:"#ship", label:"Ship"}],
+    ["close", sold, sold, "Everything paid has shipped. Close out the sale on History when you are done.", {href:"#sold", label:"History"}],
+  ];
+  const sk = S.skipNext || {}, pick = cands.find(x => x[1] && sk[x[0]] !== String(x[2])) || ["live", true, 0, "The post is out. Paste new comments on the Claims tab as claims come in.", {href:"#claims", label:"Claims"}];
+  const next = [pick[3], pick[4]], skipped = cands.filter(x => x[1] && sk[x[0]] === String(x[2])).length;
+  ui.nextKey = ["live", "post", "scan"].includes(pick[0]) ? "" : pick[0]; ui.nextSig = String(pick[2]); ui.nextText = pick[3];
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
   return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog"><ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
-    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}<button class="small" data-act="clearOpen">Clear…</button></span></div></div>`;
+    <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button></span></div>
+    ${skipped ? `<p class="note">${plural(skipped, "step is", "steps are")} set aside. <button class="small" data-act="nextBack">Bring ${skipped === 1 ? "it" : "them"} back</button></p>` : `<p class="note">Disagree? Say so in the box below, for example "skip the price check, I priced these from my own comps".</p>`}</div>`;
 }
 
 /* ---------- clear things out: any part of the tool's data, chosen by tick box, with Undo ---------- */
@@ -1588,11 +1604,16 @@ function relabel(){
     const a = cardAsk(pc), f = pc.invId && findCard(pc.invId);
     items.push({ref:pc.id, box:pc.box, text:pc.text || (f && f.c.tagText) || (a != null ? money(a) : "ask?")});
   }
+  let letter = 0;
+  const ar = b => (b.x1 - b.x0) * (b.y1 - b.y0);
   for(const g of ph.groups){
-    const bs = g.ids.map(pcard).filter(Boolean).map(c => c.box); if(!bs.length) continue;
+    const ms = g.ids.map(pcard).filter(Boolean), bs = ms.map(c => c.box); if(!bs.length) continue;
     const box = {x0:Math.min(...bs.map(b => b.x0)), y0:Math.min(...bs.map(b => b.y0)), x1:Math.max(...bs.map(b => b.x1)), y1:Math.max(...bs.map(b => b.y1))};
-    const lot = groupLot(g), a = groupAsk(g);
-    items.push({ref:"g:" + g.id, box, text:g.text || (lot && lot.tagText) || "All " + g.ids.length + " for " + (a != null ? money(a) : "ask?")});
+    const lot = groupLot(g), a = groupAsk(g), say = g.text || (lot && lot.tagText) || "All " + g.ids.length + " for " + (a != null ? money(a) : "ask?");
+    /* a lot whose cards are spread around the photo gets a lettered tag on each card instead of one tag nowhere near them */
+    if(ar(box) > bs.reduce((s, b) => s + ar(b), 0) * 2.5){ g.letter = "Lot " + String.fromCharCode(65 + letter++); ms.forEach(pc => items.push({ref:"g:" + g.id, box:pc.box, text:g.letter + " " + (g.text || (lot && lot.tagText) || (a != null ? money(a) : "ask?"))})); continue; }
+    g.letter = "";
+    items.push({ref:"g:" + g.id, box, text:say});
   }
   ph.tags = layoutTags(items); ph.qi = photoQueue().length; ph.tagText = null; ph.out = null;
 }
@@ -1620,7 +1641,7 @@ function photoGroup(ids, price, label, text){
   ph.groups.push(g);
   const inSaleToo = mirrorGroup(g);
   if(text) photoText(["g:" + g.id], text);
-  return `${plural(ids.length, "card is", "cards are")} now one lot${groupAsk(g) != null ? " at " + money(groupAsk(g)) : ""}.` + (inSaleToo ? " It is on the Sale tab too." : " It is on this photo only. Tap Add the new cards to Review and it becomes a lot in your sale as well.");
+  return `${plural(ids.length, "card is", "cards are")} now one lot${groupAsk(g) != null ? " at " + money(groupAsk(g)) : ""}.` + (inSaleToo ? " It is on the Sale tab too." : " It is on this photo only until its cards are added to Review, then it becomes a lot in your sale too.");
 }
 function photoText(refs, text){
   text = String(text || "").trim().slice(0, 40); let n = 0;
@@ -1660,14 +1681,12 @@ function photoEditBox(ph){
   const sel = ph.selRefs || [], ids = selIds(), asks = ids.map(id => cardAsk(pcard(id) || {}));
   const suggest = sel.length === 1 ? (sel[0].startsWith("g:") ? groupAsk(ph.groups.find(g => "g:" + g.id === sel[0]) || {ids:[]}) : cardAsk(pcard(sel[0]) || {})) : asks.length && asks.every(a => a != null) ? roundP(asks.reduce((a, b) => a + b, 0) * lotDisc()) : null;
   const val = ui.photoAsk ?? (suggest ?? "");
-  return `<div class="check rq"><span><strong>Change the tags.</strong> Turn on Select, tap tags, then combine them into one lot, set an ask, split a lot or remove a tag. Or say it, for example "the bottom row of Teds is one lot at $160".</span>
+  return `<div class="check rq"><span>Turn this on, tap tags on the photo to pick them, then combine them into one lot, set an ask, change the wording, split a lot or remove a tag.</span>
     <div class="row"><label class="inline"><input type="checkbox" id="pselmode" ${ui.photoSelect ? "checked" : ""}> Select tags by tapping</label>${sel.length ? `<strong>${sel.length} selected</strong><button class="small" data-act="pSelNone">Clear</button>` : ""}</div>
     ${sel.length ? `<div class="row"><label class="inline">Ask $<input class="money" id="paskval" inputmode="decimal" value="${esc(val)}"></label>
       <button class="small primary" data-act="pCombine" ${ids.length >= 2 ? "" : "disabled"}>Combine into one lot</button>
       <button class="small" data-act="pSetAsk">Set ask</button></div>
       <div class="row"><label class="inline grow">Tag says <input id="ptagtext" class="grow" value="${esc(ui.photoText ?? (sel.length === 1 ? ((ph.tags.find(t => t.ref === sel[0]) || {}).text || "") : ""))}" placeholder="All 6 for $160, $35 total, $50 shipped"></label><button class="small" data-act="pSetText">Set wording</button>${selGroups().length ? `<button class="small" data-act="pSplit">Split lot</button>` : ""}<button class="small danger" data-act="pHide">Remove tag</button></div>` : ""}
-    <div class="row"><input id="pinstr" class="grow" value="${esc(ui.photoInstr || "")}" placeholder="The bottom row of Teds is one lot at $160"><button class="small primary" data-act="pInstr" ${ui.busy ? "disabled" : ""}>Do it</button></div>
-    ${(ph.hidden || []).length ? `<div class="row"><button class="small" data-act="pShowAll">Bring back ${plural(ph.hidden.length, "removed tag", "removed tags")}</button></div>` : ""}
   </div>`;
 }
 async function photoInstr(){
@@ -1676,7 +1695,7 @@ async function photoInstr(){
   ui.busy = "Working on it"; render();
   try{
     const r3 = v => Math.round(v * 1000) / 1000;
-    const cards = ph.cards.map(pc => ({id:pc.id, name:pc.name, box:{x0:r3(pc.box.x0), y0:r3(pc.box.y0), x1:r3(pc.box.x1), y1:r3(pc.box.y1)}, ask:cardAsk(pc), hidden:(ph.hidden || []).includes(pc.id) || undefined}));
+    const cards = ph.cards.map(pc => ({id:pc.id, name:pc.invId && findCard(pc.invId) ? lineName(findCard(pc.invId).c) : pc.name, box:{x0:r3(pc.box.x0), y0:r3(pc.box.y0), x1:r3(pc.box.x1), y1:r3(pc.box.y1)}, ask:cardAsk(pc), hidden:(ph.hidden || []).includes(pc.id) || undefined}));
     const groups = ph.groups.map(g => ({id:g.id, ids:g.ids, ask:groupAsk(g)}));
     const r = (await ai("phototag", {text, cards, groups})) || {}, said = [];
     for(const o of Array.isArray(r.ops) ? r.ops : []){
@@ -1720,31 +1739,42 @@ function layoutTags(items){
 async function autoPrice(){
   const ph = ui.photo; if(!ph) return;
   if(!cap.ai){ ph.msg = aiOff(); return render(); }
-  ui.busy = ph.msg = "Finding every card and its price. This takes about a minute."; render();
+  ui.busy = ph.msg = "Finding every card and matching it to your Review list. This takes about a minute."; render();
   try{
+    const pool = [];
+    S.cards.forEach(c => { if(c.example || c.status === "sold") return; if(c.isLot) c.members.forEach(m => pool.push({c:m, lot:c})); else pool.push({c}); });
+    const inv = pool.slice(0, 500).map(p => ({id:p.c.id, card:lineName(p.c), grade:p.c.grade || "", ask:priceOf(p.c)}));
     const img = await shrink(ph.blob);
-    const r = (await ai("locate", {}, [img])) || {};
+    const r = (await ai("locate", {inv}, [img])) || {};
     const found = (Array.isArray(r.cards) ? r.cards : []).filter(f => f && f.box && f.box.x1 > f.box.x0 && f.box.y1 > f.box.y0);
-    const norm = v => String(v ?? "").trim().toLowerCase(), used = new Set(), pool = [];
-    S.cards.forEach(c => { if(c.isLot) c.members.forEach(m => pool.push({c:m, lot:c})); else pool.push({c}); });
+    const norm = v => String(v ?? "").trim().toLowerCase(), last = v => norm(v).split(/\s+/).pop(), used = new Set(), byId = new Map(pool.map(p => [p.c.id, p]));
     const match = f => {
-      const cand = pool.filter(p => !used.has(p.c.id) && norm(p.c.player) && norm(p.c.player) === norm(f.player) && (!f.year || !p.c.year || String(p.c.year) === String(f.year)));
-      const best = cand.find(p => f.num && p.c.num && String(p.c.num) === String(f.num)) || cand[0];
+      let best = f.inv ? byId.get(String(f.inv)) : null;
+      if(best && used.has(best.c.id)) best = null;
+      if(!best){
+        const cand = pool.filter(p => !used.has(p.c.id) && norm(p.c.player) && (norm(p.c.player) === norm(f.player) || (last(f.player).length > 3 && last(p.c.player) === last(f.player))) && (!f.year || !p.c.year || String(p.c.year) === String(f.year)));
+        best = cand.find(p => f.num && p.c.num && String(p.c.num) === String(f.num)) || cand.find(p => norm(p.c.player) === norm(f.player)) || cand[0] || null;
+      }
       if(best) used.add(best.c.id);
       return best;
     };
     const disc = Number(S.settings.discount) || 0;
     ph.cards = found.map((f, i) => {
       const m = match(f), mid = f.aiLow != null && f.aiHigh != null ? (Number(f.aiLow) + Number(f.aiHigh)) / 2 : null;
-      return {id:"p" + i, box:f.box, name:[f.year, f.set, f.player].filter(Boolean).join(" "), f, invId:m ? m.c.id : null, inLot:m && m.lot ? m.lot.id : null, price:null, est:mid != null ? roundP(mid * (1 - disc / 100)) : null};
+      return {id:"p" + i, box:f.box, name:[f.year, f.set, f.num ? "#" + f.num : "", f.player].filter(Boolean).join(" "), f, invId:m ? m.c.id : null, matched:!!m, inLot:m && m.lot ? m.lot.id : null, price:null, est:mid != null ? roundP(mid * (1 - disc / 100)) : null};
     });
     const byLot = new Map();
     ph.cards.forEach(pc => { if(pc.inLot){ if(!byLot.has(pc.inLot)) byLot.set(pc.inLot, []); byLot.get(pc.inLot).push(pc.id); } });
     ph.groups = [...byLot].map(([lotId, ids], i) => ({id:"g" + i, ids, lotId, price:null, label:""}));
-    ph.hidden = []; ph.selRefs = [];
+    ph.hidden = []; ph.selRefs = []; ph.hintSkip = [];
     relabel();
-    const extra = photoExtra(ph), added = extra.length ? addFoundCards() : "";
-    ph.msg = found.length ? `Placed ${plural(ph.tags.length, "price tag", "price tags")} for ${plural(found.length, "card", "cards")}.` + (ph.groups.length ? " Cards from the same lot share one tag." : "") + (extra.length ? ` ${plural(extra.length, "new card was", "new cards were")} added to Review, priced from the AI estimate less your discount. Run Double-check prices on the Sale tab to compare them with recent sales.` : "") + " Drag a tag to move it, or change the tags below." : "No cards were found in this photo.";
+    const matched = ph.cards.filter(pc => pc.invId).length, extra = photoExtra(ph), hadInv = pool.length > 0;
+    if(extra.length && !hadInv) addFoundCards();
+    ph.askAdd = extra.length > 0 && hadInv;
+    ph.msg = !found.length ? "No cards were found in this photo." : [`Found ${plural(found.length, "card", "cards")}.`,
+      matched ? `${matched} matched your Review list, so ${matched === 1 ? "its tag uses" : "their tags use"} the ask you set there.` : "",
+      extra.length ? (hadInv ? `${plural(extra.length, "card is", "cards are")} not in your Review list, so ${extra.length === 1 ? "its tag is an estimate" : "their tags are estimates"}.` : `${plural(extra.length, "card was", "cards were")} added to Review, priced from an estimate.`) : "",
+      "Check the list under the photo, then type any change in the box below."].filter(Boolean).join(" ");
   }catch(e){ ph.msg = "Auto-pricing did not work: " + (e && (e.message || e.code) || "unknown error"); }
   ui.busy = ""; render();
 }
@@ -1815,8 +1845,8 @@ function commentPanel(){
 const vPostAll = () => vPost().replace(/<\/section>\s*$/, commentPanel() + "</section>");
 
 /* ---------- double-check prices: every ask against web comps, the seller's history and collected sub prices ---------- */
-function checkItems(){
-  return S.cards.filter(c => inSale(c) && c.status === "open").map(c => {
+function checkItems(only){
+  return (only || S.cards.filter(c => inSale(c) && c.status === "open")).map(c => {
     const h = c.isLot ? null : historyFor(c);
     return {id:c.id, kind:c.isLot ? "lot" : c.pin === "page" ? "price page card" : "single", card:c.isLot ? c.player : lineName(c), grade:c.grade || "", flaws:c.isLot ? "" : c.flaws || "", ask:priceOf(c),
       value:c.aiLow != null && c.aiHigh != null ? [c.aiLow, c.aiHigh] : null, soldComp:c.comp ?? null,
@@ -1825,8 +1855,8 @@ function checkItems(){
       subPrices:h && h.sub.length ? h.sub.slice(0, 3).map(x => ({price:x.price, sold:x.sold, grade:x.grade})) : undefined};
   });
 }
-async function runCheck(){
-  const items = checkItems();
+async function runCheck(only, photo){
+  const items = checkItems(only);
   if(!items.length){ ui.cmdMsg = "Nothing in the sale to check yet. Place cards on Review first."; return render(); }
   if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
   const res = {}, notes = [], discount = Number(S.settings.discount) || 0;
@@ -1838,11 +1868,12 @@ async function runCheck(){
       (Array.isArray(r.items) ? r.items : []).forEach(x => { if(x && x.id) res[x.id] = x; });
       if(r.summary) notes.push(String(r.summary));
     }
-    S.priceCheck = {at:Date.now(), items:res, summary:notes.join(" ")};
+    S.priceCheck = {at:Date.now(), items:{...(S.priceCheck && S.priceCheck.items || {}), ...res}, summary:notes.join(" ")};
     const off = Object.values(res).filter(x => x.verdict !== "ok").length;
-    ui.cmdMsg = `Price check done: ${off ? plural(off, "ask looks", "asks look") + " off." : "every ask looks right."} The results are at the top of the Sale tab.`;
+    ui.cmdMsg = `Price check done: ${off ? plural(off, "ask looks", "asks look") + " off." : "every ask looks right."}${photo ? " Suggestions are in the list under the photo." : " The results are at the top of the Sale tab."}`;
+    if(photo && ui.photo) ui.photo.msg = ui.cmdMsg;
     save();
-  }catch(e){ ui.cmdMsg = "The price check did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  }catch(e){ ui.cmdMsg = "The price check did not work: " + (e && (e.message || e.code) || "unknown error"); if(photo && ui.photo) ui.photo.msg = ui.cmdMsg; }
   ui.busy = ""; render();
 }
 const evidenceList = r => (r.evidence || []).length ? `<div class="meta">Evidence: ${(r.evidence || []).slice(0, 3).map(e => esc([e.source, e.price != null && !isNaN(Number(e.price)) ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")) + (/^https?:\/\//.test(String(e.url || "")) ? ` <a href="${esc(e.url)}" target="_blank" rel="noopener">see it</a>` : "")).join(" · ")}</div>` : "";
@@ -1931,6 +1962,84 @@ function orderAskBox(){
     <div class="row"><button class="small primary" data-act="orderYes">Yes, follow the photos</button><button class="small" data-act="orderNo">No, keep it by section</button></div></div>`;
 }
 
+/* ---------- the photo, tied to Review: what is on it, row by row, where each ask came from, and what to fix ---------- */
+function photoRows(ph){
+  const vis = (ph.cards || []).filter(pc => !(ph.hidden || []).includes(pc.id));
+  const sorted = [...vis].sort((a, b) => (a.box.y0 + a.box.y1) - (b.box.y0 + b.box.y1)), rows = []; let cur = null;
+  for(const pc of sorted){ const yc = (pc.box.y0 + pc.box.y1) / 2, h = pc.box.y1 - pc.box.y0; if(!cur || yc - cur.yc > h * .5){ cur = {yc, list:[]}; rows.push(cur); } cur.list.push(pc); }
+  const out = [], seen = new Set();
+  rows.forEach((r, ri) => r.list.sort((a, b) => a.box.x0 - b.box.x0).forEach(pc => {
+    const g = (ph.groups || []).find(x => x.ids.includes(pc.id));
+    if(g){ if(!seen.has(g.id)){ seen.add(g.id); out.push({g, row:ri}); } } else out.push({pc, row:ri});
+  }));
+  return out;
+}
+function photoCheckCards(){
+  const ph = ui.photo, out = []; if(!ph || !ph.cards) return out;
+  ph.cards.forEach(pc => { if((ph.hidden || []).includes(pc.id)) return; const f = pc.invId && findCard(pc.invId), top = f && (f.lot || f.c); if(top && top.status === "open" && !out.includes(top)) out.push(top); });
+  return out;
+}
+function photoHints(ph){
+  if(!ph || !ph.cards) return [];
+  const free = ph.cards.filter(pc => !(ph.hidden || []).includes(pc.id) && !(ph.groups || []).some(g => g.ids.includes(pc.id)));
+  const card = pc => { const f = pc.invId && findCard(pc.invId); return f ? f.c : pc.f || {}; };
+  const norm = v => String(v ?? "").trim().toLowerCase(), skip = new Set(ph.hintSkip || []), out = [], used = new Set(), min = singleMin() || 20;
+  const by = key => { const m = new Map(); free.forEach(pc => { if(used.has(pc.id)) return; const k = key(pc); if(!k) return; if(!m.has(k)) m.set(k, []); m.get(k).push(pc); }); return m; };
+  for(const [k, list] of by(pc => norm(card(pc).player))) if(list.length >= 3 && !skip.has("p:" + k)){ out.push({k:"p:" + k, ids:list.map(x => x.id), label:card(list[0]).player + " lot", text:`${list.length} ${card(list[0]).player} cards`}); list.forEach(x => used.add(x.id)); }
+  for(const [k, list] of by(pc => { const c = card(pc); return c.year && c.set ? c.year + " " + norm(c.set) : ""; })){
+    const cheap = list.filter(pc => (cardAsk(pc) ?? 0) < min), c = cheap[0] && card(cheap[0]);
+    if(cheap.length >= 3 && !skip.has("s:" + k)) out.push({k:"s:" + k, ids:cheap.map(x => x.id), label:`${c.year} ${c.set} lot`, text:`${cheap.length} ${c.year} ${c.set} cards under ${money(min)}`});
+  }
+  return out.map(h => { const a = h.ids.map(id => cardAsk(pcard(id))); return {...h, ask:a.every(x => x != null) ? roundP(a.reduce((s, x) => s + x, 0) * lotDisc()) : null}; });
+}
+function photoHintBox(ph){
+  const hs = photoHints(ph); if(!hs.length) return "";
+  return `<div class="check rq"><strong>Sell some of these together?</strong>${hs.map(h => `<div class="row"><span class="grow">${esc(h.text)} on this photo. One tag for all of them${h.ask != null ? " at " + money(h.ask) : ""}?</span><button class="small primary" data-act="pHintYes" data-k="${esc(h.k)}">Make it one lot</button><button class="small" data-act="pHintNo" data-k="${esc(h.k)}">Keep separate</button></div>`).join("")}<span class="note">Set the lot's price or wording after, in the box under the photo.</span></div>`;
+}
+function photoAddBox(ph){
+  const ex = photoExtra(ph); if(!ex.length || !ph.askAdd) return "";
+  return `<div class="check"><span><strong>${plural(ex.length, "card is", "cards are")} not in your Review list:</strong> ${esc(ex.slice(0, 6).map(pc => pc.name || "unidentified").join(", "))}${ex.length > 6 ? ", and more" : ""}. Their tags use an estimate. Add them so they are part of the sale, or keep them on this photo only. If the tool misread a card you already have, pick the right one in the list below instead.</span>
+    <div class="row"><button class="small primary" data-act="pAddNew">Add ${ex.length} to Review</button><button class="small" data-act="pAddNo">Photo only</button></div></div>`;
+}
+function photoSayBox(ph){
+  const on = !!(ph.cards && ph.cards.length), rows = on ? photoRows(ph) : [], first = rows.find(x => x.pc && cardAsk(x.pc) != null), lastRow = rows.length ? rows[rows.length - 1].row : 0;
+  const nm = first ? ((first.pc.invId && findCard(first.pc.invId) || {c:first.pc.f || {}}).c.player || "") : "";
+  const ex = on ? [lastRow > 0 ? "The bottom row is one lot at $40" : "All of these are one lot at $40", nm ? `Make the ${nm} $` : "", "No tag on the slabbed card", "Bigger yellow tags"].filter(Boolean) : [];
+  return `<div class="say"><label for="pinstr"><strong>Tell it what to change</strong></label>
+    <div class="row"><input id="pinstr" class="grow" value="${esc(ui.photoInstr || "")}" placeholder="${on ? "The bottom row of Teds is one lot at $160" : "Tap Price every card first"}" ${on ? "" : "disabled"}><button class="small primary" data-act="pInstr" ${ui.busy || !on ? "disabled" : ""}>Do it</button></div>
+    ${ex.length ? `<div class="exs"><span class="note">Try:</span>${ex.map(x => `<button class="chipbtn" data-act="pEx" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div>` : ""}
+    ${ph.msg && !ui.busy ? `<p class="note">${esc(ph.msg)}</p>` : ""}
+    ${(ph.hidden || []).length ? `<div class="row"><button class="small" data-act="pShowAll">Bring back ${plural(ph.hidden.length, "removed tag", "removed tags")}</button></div>` : ""}
+  </div>`;
+}
+function photoList(ph){
+  if(!ph.cards || !ph.cards.length) return "";
+  const rows = photoRows(ph), last = rows.length ? rows[rows.length - 1].row : 0, pool = [];
+  S.cards.forEach(c => { if(c.example || c.status === "sold") return; (c.isLot ? c.members : [c]).forEach(m => pool.push(m)); });
+  const linked = new Set(ph.cards.map(pc => pc.invId).filter(Boolean)), nCheck = photoCheckCards().length;
+  const rowName = r => r === 0 ? (last ? "Top row" : "") : r === last ? "Bottom row" : "Row " + (r + 1);
+  const check = top => { const r = top && S.priceCheck && S.priceCheck.items[top.id]; return r && r.verdict !== "ok" && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(top) ? `<div class="meta"><span class="chip ${r.verdict === "raise" ? "ok" : "warn"}">check says ${money(Number(r.suggest))}</span> ${esc(r.why || "")} <button class="small" data-act="pPcUse" data-cid="${top.id}" data-v="${Number(r.suggest)}">Use ${money(Number(r.suggest))}</button></div>${evidenceList(r)}` : ""; };
+  let prev = -1;
+  const body = rows.map(x => {
+    const head = x.row !== prev && rowName(x.row) ? `<li class="rowhead"><h3>${rowName(x.row)}</h3></li>` : ""; prev = x.row;
+    if(x.g){
+      const g = x.g, lot = groupLot(g), names = g.ids.map(pcard).filter(Boolean).map(pc => { const f = pc.invId && findCard(pc.invId); return f ? lineName(f.c) : pc.name; });
+      return head + `<li><div><div class="ttl">${esc((g.letter ? g.letter + ": " : "") + (g.label || (lot && lot.player) || "Lot"))} <span class="chip">${g.ids.length} cards, one ask</span></div><div class="meta">${esc(names.join("; "))}</div>${check(lot)}</div>
+        <div class="nums"><label>Ask<input class="money" data-pref="g:${g.id}" inputmode="decimal" value="${groupAsk(g) ?? ""}" placeholder="$"></label><button class="small" data-act="pSplitOne" data-g="${g.id}">Split</button></div></li>`;
+    }
+    const pc = x.pc, f = pc.invId && findCard(pc.invId), a = cardAsk(pc);
+    const src = pc.matched ? "your ask from Review" : f ? "estimate, added to Review" : "estimate, not in Review";
+    return head + `<li><div><div class="ttl">${esc(f ? lineName(f.c) : pc.name || "Unidentified card")} <span class="chip ${pc.matched ? "ok" : "warn"}">${src}</span></div>
+      <div class="meta">${esc([f ? f.c.grade : pc.f && pc.f.grade, f && f.lot ? "in " + f.lot.player : ""].filter(Boolean).join(" · "))}</div>${check(f && (f.lot || f.c))}
+      <label class="inline">This card is <select data-plink="${pc.id}"><option value="">${f && pc.matched ? "not in my Review list" : "not one of my Review cards"}</option>${pool.filter(m => m.id === pc.invId || !linked.has(m.id)).map(m => `<option value="${m.id}" ${m.id === pc.invId ? "selected" : ""}>${esc(lineName(m))}${priceOf(m) != null ? " · " + money(priceOf(m)) : ""}</option>`).join("")}</select></label></div>
+      <div class="nums"><label>Ask<input class="money" data-pref="${pc.id}" inputmode="decimal" value="${a ?? ""}" placeholder="$"></label><button class="small" data-act="pHideOne" data-ref="${pc.id}">No tag</button></div></li>`;
+  }).join("");
+  return `<div class="plist"><div class="row" style="justify-content:space-between"><h2>What is on this photo</h2>${nCheck ? `<button class="small primary" data-act="pCheck" ${ui.busy ? "disabled" : ""}>Double-check ${plural(nCheck, "price", "prices")}</button>` : ""}</div>
+    <p class="note">In the order they sit, top row first. Change an ask here and the tag, Review and the price comment all follow. If the tool read a card wrong, pick the right one from your Review list.</p>
+    <ul class="cards">${body}</ul></div>`;
+}
+function skipNext(){ if(ui.nextKey) S.skipNext = {...(S.skipNext || {}), [ui.nextKey]:ui.nextSig}; }
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -1940,7 +2049,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = progressBar() + clearPanel() + cmdBar() + VIEWS[name]();
+  $("#main").innerHTML = progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
   stat();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -2018,6 +2127,17 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "pauto") return autoPrice();
+  else if(act === "pEx"){ ui.photoInstr = el.dataset.v; render(); const i = $("#pinstr"); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } return; }
+  else if(act === "pAddNew" && ui.photo){ ui.photo.msg = addFoundCards(); ui.photo.askAdd = false; }
+  else if(act === "pAddNo" && ui.photo){ ui.photo.askAdd = false; ui.photo.msg = "The new cards stay on this photo only. Link or add them any time from the list."; }
+  else if(act === "pHintYes" && ui.photo){ const h = photoHints(ui.photo).find(x => x.k === el.dataset.k); if(h){ ui.photo.msg = photoGroup(h.ids, 0, h.label); relabel(); } }
+  else if(act === "pHintNo" && ui.photo){ ui.photo.hintSkip = [...(ui.photo.hintSkip || []), el.dataset.k]; }
+  else if(act === "pHideOne" && ui.photo){ ui.photo.hidden = [...new Set([...(ui.photo.hidden || []), el.dataset.ref])]; relabel(); }
+  else if(act === "pSplitOne" && ui.photo){ ui.photo.msg = photoUngroup([el.dataset.g]); relabel(); }
+  else if(act === "pCheck") return runCheck(photoCheckCards(), true);
+  else if(act === "pPcUse"){ const f = findCard(el.dataset.cid); if(f){ useSuggestion(f.c, Number(el.dataset.v)); if(f.lot) relot(f.lot); if(ui.photo) relabel(); } }
+  else if(act === "nextSkip"){ skipNext(); ui.cmdMsg = "Set aside. Bring it back any time from the bar above."; }
+  else if(act === "nextBack"){ S.skipNext = {}; }
   else if(act === "pcRun") return runCheck();
   else if(act === "pcGo"){ go("#sale"); return runCheck(); }
   else if(act === "pcClear"){ S.priceCheck = null; }
@@ -2102,6 +2222,8 @@ document.addEventListener("change", e => {
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
+  if(t.dataset.plink && ui.photo){ const pc = pcard(t.dataset.plink); if(pc){ pc.invId = t.value || null; pc.matched = !!t.value; pc.price = null; pc.text = ""; ui.photo.askAdd = ui.photo.askAdd && photoExtra(ui.photo).length > 0; relabel(); ui.photo.msg = t.value ? "Linked to your Review card. The tag now uses that ask." : "Unlinked from Review."; save(); } return render(); }
+  if(t.dataset.pref && ui.photo){ const v = Number(String(t.value).replace(/[^0-9.]/g, "")); ui.photo.msg = photoPrice([t.dataset.pref], v); relabel(); save(); return render(); }
   if(t.id === "pselmode"){ ui.photoSelect = t.checked; if(!t.checked && ui.photo) ui.photo.selRefs = []; return render(); }
   if(t.id === "paskval"){ ui.photoAsk = t.value; return; }
   if(t.id === "pinstr"){ ui.photoInstr = t.value; return; }
@@ -2139,6 +2261,7 @@ document.addEventListener("change", e => {
 });
 
 document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
 }

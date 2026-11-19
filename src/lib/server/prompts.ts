@@ -66,7 +66,7 @@ Return JSON only:
 {"sections":[{"name":"Singles","rows":["id1","id2"]},{"name":"$10 per card","perCard":10,"rows":["id5"]},{"name":"Lots by year","lots":[{"name":"1960 Topps commons","rows":["id3","id4"],"condition":"PR to VG","highlights":"Player A, Player B","why":"one sentence on why these belong together"}]}],"title":"[FS] ...","intro":"...","photos":["Photo 1: ..."],"gaps":[]}`;
 }
 
-export function editPrompt(text: string, rows: unknown, settings: unknown): string {
+export function editPrompt(text: string, rows: unknown, settings: unknown, nextStep = ""): string {
   return `You are the control layer of a sale-prep tool used by a vintage baseball card seller on Reddit. The seller typed an instruction. Turn it into operations on their inventory.
 
 Seller's instruction:
@@ -84,8 +84,11 @@ Rules:
 - Do only what was asked. Leave everything else alone.
 - Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "say": one or two plain sentences telling the seller what you did, with counts and prices.
-
+${nextStep ? `
+The tool is currently recommending this next step to the seller: "${nextStep}". If the seller disagrees with it, pushes back, or says to skip it or leave it for later, include {"op":"skipStep"} and say in plain words what they could do instead. If they ask why, explain in "say".
+` : ""}
 Operations:
+- {"op":"skipStep"}  the seller does not want the step the tool is recommending right now; the tool moves on to the next one.
 - {"op":"lot","name":"Ted Williams lot","ids":[...],"price":150,"section":"Lots"}  group cards into one lot. "price" is the price for the whole group; leave it out to price the lot from its cards. "section" is optional.
 - {"op":"single","ids":[...]}  sell these as singles (pulls them out of any lot).
 - {"op":"page","ids":[...],"perCard":10}  put these on a per-card price page.
@@ -156,18 +159,24 @@ Look at every photo, then:
 Return JSON only: {"mixed":false,"year":1958,"set":"Topps","num":"1","player":"Ted Williams","variation":null,"grade":"Raw VG","flaws":["crease lower left","pen mark on back"],"aiLow":120,"aiHigh":170,"conf":0.96,"sawBack":true,"idWhy":"Card number 1 on the back","valueWhy":"VG copies usually sell around $200; the crease cuts that","summary":"The back confirms 1958 Topps #1. The pen mark on the back lowers the value range."}`;
 }
 
-export const locatePrompt = `This photo shows vintage baseball cards laid out for a sale on Reddit, often with a handwritten note, boxes, binders or other objects around them. Find every trading card in the photo.
+export function locatePrompt(inv: unknown[] = []): string {
+  return `This photo shows vintage baseball cards laid out for a sale on Reddit, often with a handwritten note, boxes, binders or other objects around them. Find every trading card in the photo.${inv.length ? `
+
+The seller already has these cards in their inventory, each with an id, what it is, its condition and its current ask in USD:
+${JSON.stringify(inv)}
+When a card in the photo is one of these, add "inv" with its id. Match on player, year and set, and on the card number when you can read it. Use each id at most once, and leave "inv" out when you are not sure. For a card with an "inv" id, "aiLow" and "aiHigh" can be null.` : ""}
 
 For each card give:
 - "box": where the card is, as fractions of the image width and height measured from the top-left corner, for example {"x0":0.12,"y0":0.40,"x1":0.21,"y1":0.58}. For a slabbed card, box the whole holder. For a card in a top loader or sleeve, box the card itself. Be precise: a price tag is placed just under each box.
 - "year", "set", "num" (only if you can read it or are certain from the checklist), "player" (for a multi-player or subject card, its title, for example "Fence Busters" or "1969 Rookie Stars"), "variation".
 - "grade": a conservative raw grade from what you can see, or the label grade for a slab. "flaws": short phrases separated by semicolons.
-- "aiLow" and "aiHigh": a rough USD range for this card in this condition from your general knowledge of recent sales, or null if unsure.
+- "aiLow" and "aiHigh": a USD range for what this exact card in this condition has sold for recently, from your general knowledge. Stars, rookie cards, high numbers and key cards sell for far more than commons from the same year, and low grades sell for far less than nice copies, so price the card itself, not the set. Null if unsure.
 - "conf": how sure you are of the identification.
 
 Ignore the handwritten note, boxes, binders and anything that is not a card. List cards left to right, top row first. Asks are firm on this subreddit; do not suggest room for offers.
 
 Return JSON only: {"cards":[{"box":{"x0":0.03,"y0":0.41,"x1":0.15,"y1":0.59},"year":1969,"set":"Topps","num":"100","player":"Hank Aaron","variation":null,"grade":"Raw VG","flaws":"corner wear","aiLow":40,"aiHigh":60,"conf":0.9}]}`;
+}
 
 export function photoTagPrompt(text: string, cards: unknown, groups: unknown): string {
   return `A seller is labeling a sale photo of vintage baseball cards. These are the cards found in it, with their positions as fractions of the image measured from the top-left corner, their names and their current asks in USD:

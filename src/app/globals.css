@@ -81,6 +81,14 @@ details.why dd{margin:0;overflow-wrap:anywhere}
 .opt{text-align:left;white-space:normal;line-height:1.35}
 ul.cards ul.chg li{display:list-item;border:0;padding:1px 0}
 ul.chg.meta{margin-top:4px}
+details.more{border-top:1px solid var(--line);padding-top:10px}
+details.more summary{cursor:pointer;font-weight:600;font-size:14px}
+details.more[open] summary{margin-bottom:10px}
+.say{background:var(--sunk);border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.exs{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.plist{display:flex;flex-direction:column;gap:8px}
+ul.cards li.rowhead{display:block;padding:10px 0 0;border-top:0}
+.plist select{max-width:100%;font-size:13px}
 .panel.pick{border:2px solid var(--accent)}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
