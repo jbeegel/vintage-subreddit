@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost" | "backnums";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost" | "backnums" | "lotprice";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -17,6 +17,7 @@ Rules:
 - Slabbed cards: read the label, e.g. "PSA 4". Raw cards: give a conservative grade from the visible side, e.g. "Raw VG" or "Raw PR-FR", and list visible flaws (creases, centering, paper loss, writing, stains).
 - Asks are firm on this subreddit: buyers claim at the asking price and do not negotiate. Never suggest leaving room for offers or pricing high to come down.
 - "needsBack" is true when the back must be seen to confirm identity, variation or condition.
+- "notes": any handwritten or printed note in the photos other than the seller's username and date, word for word, with what it seems to refer to, for example a count like "120 cards" beside a stack, or a price. Return them as a top-level "notes" list.
 - "idWhy": one short sentence on what in the photo identifies the card (design, name on the card, number read or inferred).
 - "valueWhy": one short sentence giving the usual range for this card and how the condition you see moves it.
 - "aiLow" and "aiHigh" are a rough USD range for what this exact card sells for raw IN THE CONDITION YOU SEE, from your general knowledge of recent sales, or null if unsure. Condition drives vintage value: price the copy in the photo, not a clean example. A creased, written-on, trimmed, stained or badly off-center card is worth a fraction of a VG-EX copy, so step the range down for every flaw you listed. For slabbed cards, price that grade. The range is shown to the seller as an unverified estimate.
@@ -176,7 +177,9 @@ For each card give:
 
 Ignore the handwritten note, boxes, binders and anything that is not a card. List cards left to right, top row first. Asks are firm on this subreddit; do not suggest room for offers.
 
-Return JSON only: {"cards":[{"box":{"x0":0.03,"y0":0.41,"x1":0.15,"y1":0.59},"year":1969,"set":"Topps","num":"100","player":"Hank Aaron","variation":null,"grade":"Raw VG","flaws":"corner wear","aiLow":40,"aiHigh":60,"conf":0.9}]}`;
+Also return any handwritten or printed note other than the username and date, word for word, as a top-level "notes" list with what it seems to refer to, for example {"text":"120 cards","about":"stack of 1969 Topps, bottom left"}.
+
+Return JSON only: {"notes":[],"cards":[{"box":{"x0":0.03,"y0":0.41,"x1":0.15,"y1":0.59},"year":1969,"set":"Topps","num":"100","player":"Hank Aaron","variation":null,"grade":"Raw VG","flaws":"corner wear","aiLow":40,"aiHigh":60,"conf":0.9}]}`;
 }
 
 export function photoTagPrompt(text: string, cards: unknown, groups: unknown): string {
@@ -280,7 +283,7 @@ ${known}
 Return JSON only: {"facts":[...],"style":"..."}`;
 }
 
-const REF_TASKS = new Set(["scan", "locate", "plan", "pricecheck", "postcopy", "edit"]);
+const REF_TASKS = new Set(["scan", "locate", "plan", "pricecheck", "postcopy", "edit", "lotprice"]);
 
 /** Reference notes from the tool's hobby reference and the seller's own notes, plus the seller's post style for writing. */
 export function withReference(task: string, prompt: string, payload: Record<string, unknown>): string {
@@ -304,6 +307,26 @@ Read the card number on every card back you can see.
 - Give the player's name when it is printed and legible; otherwise leave it out.
 
 Return JSON only: {"cards":[{"num":123,"name":"Hank Aaron","other":false}],"seen":45}`;
+}
+
+export function lotPricePrompt(lot: unknown, discount: number, web: boolean): string {
+  return `You are pricing one year lot of vintage baseball cards for a sale on r/baseballcards_vintage, the way experienced sellers there price them. Asks are firm and there are no platform fees, so asks sit a little under what comparable lots sell for on eBay (about ${discount}% under).
+
+The lot:
+${JSON.stringify(lot)}
+
+"count" is how many cards the lot holds and "different" how many are unique; "listed" may show only some of them. "pastLotSales" are this seller's own earlier lots.
+
+Price it the way year lots actually sell, not by adding up single-card prices:
+- Commons: what an ordinary card from this year and set sells for in this condition when bought in bulk. Bulk vintage commons go for a fraction of single-card prices. Say the per-card rate you use.
+- Stars and Hall of Famers: each adds value above a common, usually a share of its single-card price, because lot buyers pay less than single buyers. The more stars relative to the count, the stronger the lot.
+- Key cards (top rookies, the set's best cards, high numbers in sets where they carry a premium): count them closer to their single value, and say when one would clearly do better sold alone.
+- Set coverage: a lot covering a large share of the set (a set starter) is worth more per card to set builders; duplicates add little.
+- Condition: the mix, and any damage, writing or creases, moves the whole lot.
+${web ? "- Search for recent sold lots of this year and set on eBay with a similar card count, condition and star power, and use what you find. Use as few searches as you need." : "- You cannot search the web here; use your general knowledge of how these lots sell and say so in the evidence."}
+
+Return JSON only, at the very end of your answer: {"price":185,"low":160,"high":215,"perCommon":0.35,"breakdown":[{"label":"About 230 commons at $0.35","amount":80},{"label":"Stars: Aaron, Mays, Gibson","amount":65},{"label":"Key cards: Reggie Jackson rookie","amount":45},{"label":"Set builder premium, about 40% of the set","amount":10}],"pullOut":["#260 Reggie Jackson rookie would sell better alone, at about $110"],"why":"two or three plain sentences","evidence":[{"source":"eBay sold","price":175,"note":"1969 Topps lot, 150 cards, VG","url":"https://..."}]}
+Round the price the way sellers do: $5 steps. Never suggest leaving room for offers.`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.

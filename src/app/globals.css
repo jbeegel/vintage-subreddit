@@ -147,3 +147,11 @@ svg text{font:10px var(--mono);fill:var(--muted)}
 .wrap{overflow-x:clip}
 .panel, label, .row > *{max-width:100%}
 p, .note, .meta, label, .chipbtn, .ttl{overflow-wrap:break-word}
+.jumpbar{position:sticky;top:0;z-index:20;background:var(--bg);padding:6px 0 8px;margin-bottom:4px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.jumpbar .jt,.jumpbar .js{display:flex;gap:6px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.jumpbar .jt::-webkit-scrollbar,.jumpbar .js::-webkit-scrollbar{display:none}
+.jumpbar a,.jumpbar button{flex:none;font:600 13px/1 var(--body);padding:7px 10px;border-radius:14px;background:var(--sunk);color:var(--ink);text-decoration:none;border:0}
+.jumpbar a.on{background:var(--ink);color:var(--bg)}
+.jumpbar a span{opacity:.7;font-weight:500}
+.jumpbar .js button{background:transparent;border:1px solid var(--line);font-weight:500}
+[data-jump]{scroll-margin-top:110px}

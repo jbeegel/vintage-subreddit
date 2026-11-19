@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backNumsPrompt, backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { lotPricePrompt, backNumsPrompt, backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost", "backnums"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost", "backnums", "lotprice"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -36,6 +36,10 @@ export async function POST(req: Request) {
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
+  else if (task === "lotprice") {
+    if (!payload.lot || typeof payload.lot !== "object") return fail(400, "Send the lot to price.");
+    prompt = lotPricePrompt(payload.lot, Math.min(60, Math.max(0, Number(payload.discount) || 0)), true);
+  }
   else if (task === "backnums") prompt = backNumsPrompt(String(payload.year ?? "").slice(0, 4), String(payload.set ?? "").slice(0, 40), Math.max(0, Math.min(1000, Number(payload.size) || 0)));
   else if (task === "locate") prompt = locatePrompt(Array.isArray(payload.inv) ? payload.inv.slice(0, 600) : []);
   else if (task === "pricecheck") {
@@ -104,7 +108,7 @@ export async function POST(req: Request) {
   try {
     const anthropic = new Anthropic();
     // The price check may search the web; a long search can pause the turn, so send the partial answer back to finish it.
-    const tools = task === "pricecheck" ? [{ type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 12 }] : undefined;
+    const tools = task === "pricecheck" || task === "lotprice" ? [{ type: "web_search_20260209" as const, name: "web_search" as const, max_uses: 12 }] : undefined;
     const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [{ role: "user", content }];
     let message = null as Anthropic.Beta.Messages.BetaMessage | null;
     for (let round = 0; round < 4; round++) {

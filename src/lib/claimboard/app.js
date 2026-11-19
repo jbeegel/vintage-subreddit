@@ -59,7 +59,7 @@ async function api(path, {method = "GET", json, form} = {}){
 }
 function ai(task, payload, images){
   const form = new FormData();
-  const ref = ["scan", "locate", "plan", "pricecheck", "postcopy", "edit"].includes(task) ? {facts:factsFor(task), style:task === "postcopy" ? String(S.settings.styleNotes || "") : undefined} : {};
+  const ref = ["scan", "locate", "plan", "pricecheck", "postcopy", "edit", "lotprice"].includes(task) ? {facts:factsFor(task), style:task === "postcopy" ? String(S.settings.styleNotes || "") : undefined} : {};
   form.append("task", task); form.append("payload", JSON.stringify({...(payload || {}), ...ref}));
   (images || []).forEach((b, i) => form.append("images", b, "image-" + i + ".jpg"));
   return api("/api/ai", {method:"POST", form});
@@ -166,7 +166,11 @@ async function framesFromVideo(file, onStep){
     return out;
   } finally { URL.revokeObjectURL(url); }
 }
-async function scan(files){
+async function scan(files, opts){
+  opts = opts || {};
+  const vid0 = files.length === 1 && files[0].type.startsWith("video/"), hashes = vid0 ? [] : await Promise.all(files.map(imgHash));
+  if(!opts.skipDup && hashes.some(h => seenBefore(h))){ ui.dupAsk = {files, hashes}; ui.scanMsg = ""; return render(); }
+  ui.dupAsk = null;
   if(!cap.ai){ ui.scanMsg = aiOff() + " You can still add rows by hand."; return render(); }
   const set = m => { ui.busy = m; const el = $("#scanmsg"); if(el){ el.textContent = m; el.className = "progress busy"; } };
   try{
@@ -176,22 +180,26 @@ async function scan(files){
     else for(let i = 0; i < files.length; i++){ set(`Preparing photo ${i + 1} of ${files.length}`); const t = ui.manyCards ? await tiles(files[i]) : [await shrink(files[i], 1568)]; if(t.length > 1) tiled = true; blobs.push(...t); }
     const per = 3; /* keeps each upload under the 4.5 MB request limit common on serverless hosts */
     const batches = []; for(let i = 0; i < blobs.length; i += per) batches.push(blobs.slice(i, i + per));
+    const prior = S.cards.flatMap(c => c.isLot ? c.members : [c]).filter(c => !c.example), dn = v => String(v ?? "").trim().toLowerCase();
+    const twinOf = c => prior.find(p => dn(p.year) === dn(c.year) && dn(p.set) === dn(c.set) && dn(p.player) === dn(c.player) && (!p.num || !c.num || dn(p.num) === dn(c.num)));
     const seen = new Map(), t0 = Date.now(); let added = 0, done = 0, next = 0;
     if(S.cards.every(c => c.example)) S.cards = [];
     const tick = () => { const secs = Math.round((Date.now() - t0) / 1000), left = done ? Math.max(0, Math.round((Date.now() - t0) / done * (batches.length - done) / Math.min(3, batches.length - done || 1) / 1000)) : 0;
       set(`Identifying cards: ${done} of ${plural(batches.length, "batch", "batches")} done, ${plural(added, "card", "cards")} found so far · ${secs}s${done && done < batches.length ? `, about ${left}s left` : batches.length > 1 && !done ? ", the first results take about a minute" : ""}`); };
     const timer = setInterval(tick, 1000); tick();
     const take = r => {
+      for(const n of (r && Array.isArray(r.notes) ? r.notes : [])) if(n && n.text) addPhotoNote(String(n.text), String(n.about || ""));
       for(const c of (r && r.cards) || []){
         const key = [c.year, c.set, c.num, c.player, c.grade].join("|").toLowerCase();
         if(isVideo && seen.has(key)) continue; seen.set(key, 1);
-        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null});
+        S.cards.push({id:uid(), status:"open", year:c.year ?? "", set:c.set ?? "", num:c.num ?? "", player:c.player ?? "Unidentified card", variation:c.variation ?? "", grade:c.grade ?? "", flaws:c.flaws ?? "", conf:typeof c.conf === "number" ? c.conf : .5, needsBack:!!c.needsBack, aiLow:numOrNull(c.aiLow), aiHigh:numOrNull(c.aiHigh), where:c.where ?? "", flawsAI:c.flaws ?? "", idWhy:c.idWhy ?? "", valueWhy:c.valueWhy ?? "", comp:null, price:null, dupOf:isVideo ? undefined : (twinOf(c) || {}).id});
         added++;
       }
     };
     /* three requests at a time; each batch's cards show up in Review as soon as it finishes */
     const worker = async () => { while(next < batches.length){ const batch = batches[next++]; const r = await ai("scan", {video: isVideo, tiled}, batch); take(r); done++; save(); render(); tick(); } };
     try{ await Promise.all(Array.from({length:Math.min(3, batches.length)}, worker)); } finally { clearInterval(timer); }
+    S.imgSeen = [...(S.imgSeen || []), ...hashes.filter(Boolean).map(h => ({h, at:Date.now(), cards:added}))].slice(-400);
     ui.scanMsg = added ? `Added ${added} card${added === 1 ? "" : "s"} from ${blobs.length} ${isVideo ? "video frame" : tiled ? "crop" : "photo"}${blobs.length === 1 ? "" : "s"} in ${plural(Math.max(1, Math.round((Date.now() - t0) / 1000)), "second", "seconds")}. Check anything flagged, then add comps.` : "No cards found in those images. Try closer, flatter photos with less glare.";
     save();
   }catch(e){
@@ -209,8 +217,9 @@ function vInventory(){
   const placed = S.cards.filter(c => !c.example && (c.status !== "open" || c.isLot || c.section)).length;
   const hasEx = S.cards.some(c => c.example), any = S.cards.some(c => !c.example), all = list.length && list.every(x => ui.sel.has(x.id));
   return `<section class="view">
-  <div class="panel">
+  <div class="panel" data-jump="Add cards">
     <h2>${any ? "Add more cards" : "Scan your cards"}</h2>
+    ${dupBox()}
     <div class="row">
       <input type="file" id="file" accept="image/*,video/*" multiple hidden>
       <button class="primary" data-act="pick" ${ui.busy ? "disabled" : ""}>Take or choose photos</button>
@@ -224,7 +233,8 @@ function vInventory(){
   ${groupPanel()}
   ${singlesPanel()}
   ${hasEx ? `<p class="flag">These rows are examples. They clear when you scan, or <a href="#" data-act="clearEx">clear them now</a>.</p>` : ""}
-  <div class="panel" id="decide">
+  ${notesBox()}
+  <div class="panel" id="decide" data-jump="To decide">
     <div class="row" style="justify-content:space-between"><h2>${ui.onlyCheck ? "Cards to check" : "To decide"} <span class="note">${list.length}</span></h2>
       <label class="inline">Sort <select id="set-sort">${Object.entries(SORTS).map(([k, l]) => `<option value="${k}" ${(S.settings.sort || "added") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
     <p class="note">Give each card a place: a single, a price page or a lot. Placed cards move to the <a href="#sale">Sale tab</a>${placed ? `, which has ${placed} item${placed === 1 ? "" : "s"} so far` : ""}. Asks are firm: buyers claim at the price shown. To group cards the tool did not suggest, tick them and tap Combine into one lot, or type it in the bar at the top, for example "put the 1961 Post cards in one lot".</p>
@@ -241,7 +251,7 @@ function vInventory(){
 function planFold(){
   const h = planPanel(), open = ui.planDraft != null || ui.planMsg ? "open" : "";
   if(!h.startsWith('<div class="panel"><h2>Plan the sale</h2>')) return h;
-  return h.replace('<div class="panel"><h2>Plan the sale</h2>', `<details class="panel" ${open}><summary><strong>Or describe the whole sale in words</strong></summary>`).replace(/<\/div>\s*$/, "</details>");
+  return h.replace('<div class="panel"><h2>Plan the sale</h2>', `<details class="panel" data-jump="Plan" ${open}><summary><strong>Or describe the whole sale in words</strong></summary>`).replace(/<\/div>\s*$/, "</details>");
 }
 function rowInv(c){
   const p = priceOf(c), undecided = c.status === "open" && !c.isLot && !c.section, pend = c.flawsAI != null && !c.flawsOk && !c.isLot;
@@ -251,6 +261,7 @@ function rowInv(c){
       ${hobbyLine(c)}${valueLine(c)}${histLine(c)}${pcLine(c)}</div></div>
     <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
     ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button><button class="small" data-act="pcOneRow" ${ui.busy ? "disabled" : ""}>${S.priceCheck && S.priceCheck.items[c.id] ? "Check again" : "Check price"}</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
+    ${c.dupOf ? dupLine(c) : ""}
     ${needsCheck(c) ? checkBox(c) : ""}
     ${resultBox(c)}
     ${rqBox(c)}
@@ -386,7 +397,7 @@ function vSold(){
   const hit = r => !ui.q || [r.year, r.set, r.player, r.grade].join(" ").toLowerCase().includes(ui.q.toLowerCase());
   const tbl = rows => rows.length ? `<div class="scroll"><table><thead><tr><th>Card</th><th>Grade</th><th class="num">Sold</th><th class="num">Date</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(title(r))}</td><td>${esc(r.grade || "")}</td><td class="num">${money(r.price)}</td><td class="num">${r.date ? new Date(r.date).toLocaleDateString([], {month:"short",day:"numeric",year:"2-digit"}) : ""}</td></tr>`).join("")}</tbody></table></div>` : "";
   return `<section class="view">
-  <div class="panel"><h2>Your sold log</h2>
+  <div class="panel" data-jump="Sold log"><h2>Your sold log</h2>
     <p class="note">Every row you mark paid lands here with its final price. This is the start of a price history that eBay does not have: what cards clear for on the sub.</p>
     ${tbl(mine) || `<p class="note">Nothing sold yet. Mark a row "Paid, sold" on the Claims tab.</p>`}
     <label class="inline"><input type="checkbox" id="set-share" ${S.settings.share ? "checked" : ""} ${cap.token ? "" : "disabled"}> Add my sold prices to the shared index. Card, grade, price and date only. No usernames.</label>
@@ -528,6 +539,7 @@ function whyLines(c){
     out.push(["In this lot", c.members.map(m => title(m) + (priceOf(m) != null ? " " + money(priceOf(m)) : " (no price)")).join("; ")]);
     out.push(["Lot price", c.members.some(m => priceOf(m) == null) ? "Not set, because at least one card inside has no price." : `The cards' asks add up to ${money(sum)}. Less the ${b}% bundle discount and rounded, that is ${money(roundP(sum * (1 - b / 100)))}.` + (p !== roundP(sum * (1 - b / 100)) ? ` You changed it to ${money(p)}.` : "")]);
     if(lotN(c) > c.members.length) out.push(["Card count", `${lotN(c)} cards in all${c.unique ? ", " + c.unique + " different" : ""}; ${c.members.length} listed. ${Number(c.extraEach) > 0 ? `The unlisted ones count ${money(Number(c.extraEach))} each in the lot price.` : "The unlisted ones are not in the worked-out price."}`]);
+    out.push(["Lot analysis", c.lotEval && c.lotEval.price ? `${money(c.lotEval.price)}${c.lotEval.low && c.lotEval.high ? ", likely " + money(c.lotEval.low) + " to " + money(c.lotEval.high) : ""}. ${c.lotEval.why} ${c.lotEval.breakdown.map(b => b.label + (b.amount != null ? " " + money(b.amount) : "")).join("; ")}`.trim() : "Not run yet. The worked-out price is a quick estimate from the listed cards; Price this lot properly gives a full analysis."]);
     const lh = lotHobbyText(c); if(lh) out.push(["Hobby notes", lh.replace(/^./, ch => ch.toUpperCase()) + "."]);
     out.push(["Why a lot", c.why || (c.manual ? "You grouped these by hand." : "Grouped by the sale plan.")]);
     return out;
@@ -595,7 +607,7 @@ function checkBox(c){
 function checkPanel(){
   const n = S.cards.filter(needsCheck).length;
   if(!n){ ui.onlyCheck = false; return ""; }
-  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>${n} card${n === 1 ? " needs" : "s need"} a check</h2>
+  return `<div class="panel pick" data-jump="Checks"><div class="row" style="justify-content:space-between"><h2>${n} card${n === 1 ? " needs" : "s need"} a check</h2>
     <label class="inline"><input type="checkbox" id="onlycheck" ${ui.onlyCheck ? "checked" : ""}> Show only these</label></div>
     <p class="note">The scan was not sure what these are, or needs the back to tell. Each one is marked in the list below. Add a back photo, fix the year and number, or confirm it is right.</p></div>`;
 }
@@ -646,7 +658,7 @@ function groupSuggestions(){
 function groupPanel(){
   const gs = groupSuggestions(); if(!gs.length) return "";
   const d = Number(S.settings.lotDiscount ?? 10);
-  return `<div class="panel pick" id="groups"><h2>Suggested groupings <span class="note">${gs.length}</span></h2>
+  return `<div class="panel pick" id="groups" data-jump="Groupings"><h2>Suggested groupings <span class="note">${gs.length}</span></h2>
     <p class="note">Cards that usually sell better together. Check the cards and the price, then make the lot in one tap. A card can show up in more than one suggestion until you choose.</p>
     <ul class="cards">${gs.slice(0, 8).map(g => {
       const sum = g.cards.reduce((a, c) => a + (priceOf(c) || 0), 0), un = g.cards.filter(c => priceOf(c) == null).length;
@@ -815,7 +827,7 @@ function setAside(id, choice){
 function singlesPanel(){
   if(!S.cards.some(c => c.status === "open")) return "";
   const cs = singleCandidates(), min = singleMin();
-  return `<div class="panel pick"><div class="row" style="justify-content:space-between"><h2>Single or lot anchor?${cs.length ? ` <span class="note">${cs.length} to decide</span>` : ""}</h2>
+  return `<div class="panel pick" data-jump="Single or anchor"><div class="row" style="justify-content:space-between"><h2>Single or lot anchor?${cs.length ? ` <span class="note">${cs.length} to decide</span>` : ""}</h2>
     <label class="inline">Suggest at $<input class="money" id="set-singleMin" inputmode="decimal" value="${esc(S.settings.singleMin ?? 20)}" style="width:64px"> and up</label></div>
     ${cs.length ? `<p class="note">A big card can sell well alone, or it can anchor a lot and make the whole thing move. Each one has both options priced out and a recommendation from your past sales, sub prices and comps. You decide.</p>
     <ul class="cards">${cs.map(x => { const c = x.c, a = pullAdvice(x), lot = a.lot, solo = a.rec === "single";
@@ -922,7 +934,7 @@ function historyPanels(){
     ${sales.map(s => { const sold = s.items.filter(i => i.sold != null); return `<details class="edit"><summary>${esc(dshort(s.date))} · ${esc(s.name)} · ${sold.length} of ${s.items.length} sold · ${money(sold.reduce((a, i) => a + i.sold, 0)) || "$0"}</summary>
       <div class="scroll"><table><thead><tr><th>Item</th><th>Sold as</th><th class="num">Ask</th><th class="num">Sold</th></tr></thead><tbody>${s.items.map(i => `<tr><td>${esc(i.t)}</td><td>${esc(i.section || i.kind)}</td><td class="num">${money(i.ask)}</td><td class="num">${i.sold != null ? money(i.sold) : "unsold"}</td></tr>`).join("")}</tbody></table></div><div class="row" style="padding-top:8px"><button class="small danger" data-act="delSale" data-sid="${s.id}">Delete this record</button></div></details>`; }).join("") || `<p class="note">No finished sales yet.</p>`}
   </div>
-  <div class="panel"><h2>Sub sales you have read</h2>
+  <div class="panel" data-jump="Sub sales"><h2>Sub sales you have read</h2>
     <p class="note">Paste the text of any sale thread from the sub, price list and comments included. The tool pulls out each card, its price and whether it sold, and shows them as reference notes on your matching cards. They stay private to you and usernames are not kept.</p>
     <textarea id="subtext" placeholder="Paste a sale post and its comments here"></textarea>
     <div class="row"><button class="primary" data-act="learn" ${ui.busy ? "disabled" : ""}>Add to my reference</button><span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.learnMsg || "")}</span></div>
@@ -1341,6 +1353,9 @@ async function loadPhoto(file, quiet){
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
     ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, scale:Number(S.settings.tagScale) || 1, color:S.settings.tagColor || "white", tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     setPhotoTarget(""); /* no headline by default: a band across the top would cover the handwritten note */
+    ui.photo.hash = await imgHash(blob);
+    const twin = (ui.photos || []).find(x => x.hash && hamming(x.hash, ui.photo.hash) <= 6);
+    if(twin) ui.photo.msg = `This looks like photo ${(ui.photos || []).indexOf(twin) + 1}, which is already here. Delete this one if it is a repeat.`;
     ui.photo.ord = Date.now() + (ui.photos || []).length; ui.photos = [...(ui.photos || []), ui.photo]; ui.photoErr = "";
   }catch(e){ if(quiet) return null; ui.photo = null; ui.photoErr = "That file could not be opened as a photo."; }
   if(quiet) return ui.photo;
@@ -1431,7 +1446,7 @@ async function savePhoto(){
 function vPhotos(){
   const ph = ui.photo, ts = photoTargets(), n = (ui.photos || []).length, have = S.cards.filter(c => !c.example && c.status !== "sold").length;
   const dk = (k, open) => `data-dk="${k}" ${(ui.dopen[k] ?? open) ? "open" : ""}`;
-  return `<section class="view"><div class="panel"><h2>Label a sale photo</h2>
+  return `<section class="view"><div class="panel" data-jump="Photo"><h2>Label a sale photo</h2>
     <p class="note">${have ? "Take one picture or upload a batch. Tap Price every card. Cards already in your Review list get the asks you set there, and anything new gets an estimate you can check." : "Take the picture and tap Price every card. The tool finds each card, estimates an ask and adds it to Review, so a sale can start from a photo."} Then type any change, like "the bottom row is one lot at $40".</p>
     <div class="row"><input type="file" id="pfile" accept="image/*" multiple hidden><button class="${ph ? "small" : "primary"}" data-act="ppick">${n ? "Add more photos" : "Take or choose photos"}</button>${n ? `<button class="small danger" data-act="clearOpen" data-k="photos">Delete all photos</button>` : ""}
       ${ui.photoErr && !ph ? `<span class="note">${esc(ui.photoErr)}</span>` : ""}</div>
@@ -1490,6 +1505,7 @@ function rowSale(c){
     ${rqBox(c)}
     ${whyBox(c)}
     ${c.isLot && c.status === "open" ? countBox(c) : ""}
+    ${c.isLot && c.status === "open" ? lotEvalBox(c) : ""}
     ${c.isLot && c.status === "open" ? `<div class="countbox">${invBox(c)}</div>` : ""}
     ${c.isLot && c.status === "open" ? `<label class="inline"><input type="checkbox" data-split="${c.id}" ${c.splitOk ? "checked" : ""}> Cards in this lot can also be bought one at a time</label>` : ""}
     ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
@@ -1499,14 +1515,14 @@ function vSale(){
   const items = ordered().filter(inSale), secs = [...new Set(items.map(c => c.section || "Other cards"))];
   const live = items.filter(c => c.status !== "sold"), total = live.reduce((a, c) => a + (priceOf(c) || 0), 0);
   const cards = cardTotal(items), unpriced = items.filter(c => priceOf(c) == null).length, decide = toDecide().filter(c => !c.example).length;
-  return `<section class="view"><div class="panel"><h2>Your sale so far</h2>
+  return `<section class="view"><div class="panel" data-jump="Summary"><h2>Your sale so far</h2>
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <span class="chip warn">${unpriced} without a price</span>` : ""}</p>
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
     <div class="row"><a class="btn primary" href="#post">Build the post</a><button class="small" data-act="goComment">Price comment</button>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
     ${priceCheckPanel()}
     ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
-      return `<div class="panel"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
+      return `<div class="panel" data-jump="${esc(s)}"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
       : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
   </section>`;
 }
@@ -1529,10 +1545,12 @@ function progressBar(){
   const cands = [
     ["scan", !real.length, 0, "Scan a photo of your cards, or start from a sale photo on the Photos tab.", view === "inventory" ? {act:"pick", label:"Take or choose photos"} : {href:"#inventory", label:"Start scanning"}],
     ["checks", checks, checks, `${plural(checks, "card needs", "cards need")} a check before pricing.`, {act:"showChecks", label:"Show them"}],
+    ["dups", S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, `${plural(S.cards.filter(c => c.dupOf && findCard(c.dupOf)).length, "card looks", "cards look")} like a duplicate of one you already have.`, {href:"#inventory", label:"Review them"}],
     ["goal", S.goal && decide >= 2, decide, `Sort the ${decide} cards still to place into your plan: ${String(S.goal || "").length > 90 ? String(S.goal).slice(0, 87) + "..." : S.goal || ""}`, {act:"goalApply", label:"Sort to my plan"}],
     ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
     ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
     ["count", S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, "lot needs", "lots need")} a card count. Unique cards drive a year lot's price.`, {href:"#sale", label:"Add counts"}],
+    ["lotprice", S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, "lot has", "lots have")} only a quick estimate. Run a full lot analysis: count, stars, keys and recent lot sales.`, {act:"lotEvalAll", label:"Analyze my lots"}],
     ["pricecheck", !S.postedAt && unchecked, unchecked, `Double-check ${unchecked === items.filter(c => c.status === "open").length ? "the asks" : plural(unchecked, "ask", "asks")} against recent sales before you post.`, {act:"pcGo", label:"Double-check prices"}],
     ["photos", !S.postedAt && items.length && !labeled, items.length, "Put the asks on your sale photos so buyers see every price.", {href:"#photos", label:"Label photos"}],
     ["post", !S.postedAt, 0, "Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}],
@@ -1776,6 +1794,7 @@ async function autoPrice(){
     const inv = pool.slice(0, 500).map(p => ({id:p.c.id, card:lineName(p.c), grade:p.c.grade || "", ask:priceOf(p.c)}));
     const img = await shrink(ph.blob);
     const r = (await ai("locate", {inv}, [img])) || {};
+    (Array.isArray(r.notes) ? r.notes : []).forEach(n => n && n.text && addPhotoNote(String(n.text), String(n.about || "")));
     const found = (Array.isArray(r.cards) ? r.cards : []).filter(f => f && f.box && f.box.x1 > f.box.x0 && f.box.y1 > f.box.y0);
     const norm = v => String(v ?? "").trim().toLowerCase(), last = v => norm(v).split(/\s+/).pop(), used = new Set(), byId = new Map(pool.map(p => [p.c.id, p]));
     const match = f => {
@@ -1857,8 +1876,8 @@ function priceComment(){
   return out.replace(/\n{3,}/g, "\n\n");
 }
 function commentPanel(){
-  if(!S.cards.some(inSale)) return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2><p class="note">Nothing is in the sale yet. Place cards on the Review tab, and the comment builds itself here.</p></div>`;
-  return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2>
+  if(!S.cards.some(inSale)) return `<div class="panel" id="pricecomment" data-jump="Price comment"><h2>Reddit price comment</h2><p class="note">Nothing is in the sale yet. Place cards on the Review tab, and the comment builds itself here.</p></div>`;
+  return `<div class="panel" id="pricecomment" data-jump="Price comment"><h2>Reddit price comment</h2>
     <p class="note">The whole sale in order: year, set, number and name, a short condition summary and the ask. Lots list every card, their grades and any issues. It updates whenever the sale changes.</p>
     ${photosWithCards().length ? `<label class="inline"><input type="checkbox" id="set-commentByPhoto" ${S.settings.commentByPhoto ? "checked" : ""}> Order by photo (photo 1 first, cards left to right)</label>` : ""}
     <div class="row"><label class="inline">Layout <select id="set-commentStyle"><option value="list" ${S.settings.commentStyle !== "lines" ? "selected" : ""}>One line per card</option><option value="lines" ${S.settings.commentStyle === "lines" ? "selected" : ""}>Lot headers, prices on one line</option></select></label>
@@ -1903,11 +1922,11 @@ async function runCheck(only, photo){
 const evidenceList = r => (r.evidence || []).length ? `<div class="meta">Evidence: ${(r.evidence || []).slice(0, 3).map(e => esc([e.source, e.price != null && !isNaN(Number(e.price)) ? money(Number(e.price)) : "", e.note].filter(Boolean).join(" ")) + (/^https?:\/\//.test(String(e.url || "")) ? ` <a href="${esc(e.url)}" target="_blank" rel="noopener">see it</a>` : "")).join(" · ")}</div>` : "";
 function priceCheckPanel(){
   const pc = S.priceCheck, busy = ui.busy ? "disabled" : "";
-  if(!pc) return `<div class="panel" id="pricecheck"><div class="row" style="justify-content:space-between"><h2>Double-check prices</h2><button class="primary" data-act="pcRun" ${busy}>Double-check prices</button></div>
+  if(!pc) return `<div class="panel" id="pricecheck" data-jump="Price check"><div class="row" style="justify-content:space-between"><h2>Double-check prices</h2><button class="primary" data-act="pcRun" ${busy}>Double-check prices</button></div>
     <p class="note">Compares every ask with recent sold prices on the web, your own past sales and the sub prices you collected, then suggests where to raise or lower. Nothing changes until you tap Use.</p>${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}</div>`;
   const rows = S.cards.filter(c => inSale(c) && pc.items[c.id]).map(c => [c, pc.items[c.id]]);
   const flagged = rows.filter(([c, r]) => r.verdict !== "ok" && Number(r.suggest) > 0 && Number(r.suggest) !== priceOf(c));
-  return `<div class="panel pick" id="pricecheck"><div class="row" style="justify-content:space-between"><h2>Price check <span class="note">${esc(dshort(pc.at))}</span></h2>
+  return `<div class="panel pick" id="pricecheck" data-jump="Price check"><div class="row" style="justify-content:space-between"><h2>Price check <span class="note">${esc(dshort(pc.at))}</span></h2>
       <span class="row" style="gap:6px"><button class="small" data-act="pcRun" ${busy}>Run again</button><button class="small" data-act="pcClear">Dismiss</button></span></div>
     ${pc.summary ? `<p>${esc(pc.summary)}</p>` : ""}
     <p class="note">${flagged.length ? plural(flagged.length, "ask looks", "asks look") + " off." : "Every ask looks right."} ${rows.length - flagged.length ? plural(rows.length - flagged.length, "item checks", "items check") + " out." : ""} Each card's Why panel keeps its result and evidence.</p>
@@ -1946,7 +1965,7 @@ function copyBox(){
 
 /* ---------- photo order: numbered strip, move earlier or later, save every photo in order ---------- */
 function photoRecord(ph){
-  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied, page:ph.page || null};
+  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied, page:ph.page || null, hash:ph.hash || null};
 }
 const photosWithCards = () => (ui.photos || []).filter(x => (x.cards || []).some(pc => pc.invId));
 function movePhoto(d){
@@ -2059,7 +2078,7 @@ function photoList(ph){
       <label class="inline">This card is <select data-plink="${pc.id}"><option value="">${f && pc.matched ? "not in my Review list" : "not one of my Review cards"}</option>${pool.filter(m => m.id === pc.invId || !linked.has(m.id)).map(m => `<option value="${m.id}" ${m.id === pc.invId ? "selected" : ""}>${esc(lineName(m))}${priceOf(m) != null ? " · " + money(priceOf(m)) : ""}</option>`).join("")}</select></label></div>
       <div class="nums"><label>Ask<input class="money" data-pref="${pc.id}" inputmode="decimal" value="${a ?? ""}" placeholder="$"></label><button class="small" data-act="pHideOne" data-ref="${pc.id}">No tag</button></div></li>`;
   }).join("");
-  return `<div class="plist"><div class="row" style="justify-content:space-between"><h2>Price sheet</h2>${nCheck ? `<button class="small primary" data-act="pCheck" ${ui.busy ? "disabled" : ""}>Double-check ${plural(nCheck, "price", "prices")}</button>` : ""}</div>
+  return `<div class="plist" data-jump="Price sheet"><div class="row" style="justify-content:space-between"><h2>Price sheet</h2>${nCheck ? `<button class="small primary" data-act="pCheck" ${ui.busy ? "disabled" : ""}>Double-check ${plural(nCheck, "price", "prices")}</button>` : ""}</div>
     <p class="note">In the order they sit, top row first. Change an ask here and the tag, Review and the price comment all follow. If the tool read a card wrong, pick the right one from your Review list.</p>
     ${sheetTools(ph)}
     <ul class="cards">${body}</ul>
@@ -2220,7 +2239,7 @@ function photoStrip(){
 async function startOver(){
   const cards = cardTotal(S.cards.filter(c => !c.example)), photos = ui.photos || [];
   ui.undo = JSON.stringify(S);
-  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.goal = ""; S.settings.goalSkipped = false; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
+  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.imgSeen = []; S.photoNotes = []; S.goal = ""; S.settings.goalSkipped = false; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
   ui.undoPhotos = photos; ui.undoPhotosFor = ui.undo;
   for(const x of photos) await idb("del", x.id);
   ui.photos = []; ui.photo = null; ui.sel.clear(); ui.copyOpts = null; ui.clearOpen = false; ui.photoInstr = ""; ui.listText = "";
@@ -2373,7 +2392,7 @@ function knowPanel(){
       ${h.vars || h.range ? `<p class="meta"><strong>Errors and variations:</strong> ${esc([...Object.entries(h.vars || {}).map(([n, t]) => "#" + n + " " + t), ...(h.range || []).map(r => r[2])].join("; "))}</p>` : ""}
       ${notes.length ? `<ul class="chg meta">${notes.map(([x, i]) => `<li>${x.num ? "#" + esc(x.num) + ": " : ""}${esc(x.text)} <button class="small" data-act="knowDel" data-i="${i}">Remove</button></li>`).join("")}</ul>` : ""}</div>`; };
   const L = ui.learned;
-  return `<div class="panel" id="know"><h2>Hobby know-how</h2>
+  return `<div class="panel" id="know" data-jump="Know-how"><h2>Hobby know-how</h2>
     <p class="note">What the tool knows about vintage sets: set sizes, high-number series, key rookies and stars, errors and variations. It flags these on your cards and lots, and uses them when it reads photos, builds lots, checks prices and writes posts. Add your own notes, or paste a post you like and it learns new facts and the post's layout.</p>
     <label>Look up a year or set<input id="knowq" value="${esc(ui.knowQ || "")}" placeholder="1972 Topps"></label>
     ${shown.length ? shown.map(setHtml).join("") : `<p class="note">${q ? "Nothing on that yet. Add a note below and the tool will use it." : "Type a year, like 1968, to see what the tool knows."}</p>`}
@@ -2439,8 +2458,9 @@ const cardTotal = list => list.reduce((a, c) => a + lotN(c), 0);
 function countBox(c){
   const n = c.members.length, more = lotN(c) - n;
   return `<div class="${c.countSet ? "fields" : "check rq"} countbox">${c.countSet ? "" : `<span><strong>How many cards are in this lot?</strong> The tool lists ${n}. If the lot holds more, enter the total and how many are different. Unique cards drive the price of a year lot.</span>`}
+    ${(() => { const nf = noteFor(c); return nf && noteCount(nf[0].text) !== lotN(c) ? `<div class="row"><span>Your photo note says <strong>"${esc(nf[0].text)}"</strong>.</span><button class="small primary" data-act="noteUse" data-i="${nf[1]}" data-lid="${c.id}">Use ${noteCount(nf[0].text)} as the count</button></div>` : ""; })()}
     <div class="row"><label class="inline">Cards in lot <input class="money" data-lc="count" data-lid="${c.id}" inputmode="numeric" value="${c.count ?? ""}" placeholder="${n}"></label><label class="inline">Different <input class="money" data-lc="unique" data-lid="${c.id}" inputmode="numeric" value="${c.unique ?? ""}" placeholder="${lotN(c)}"></label>${more > 0 ? `<label class="inline">Each unlisted card $<input class="money" data-lc="extraEach" data-lid="${c.id}" inputmode="decimal" value="${c.extraEach ?? ""}" placeholder="0"></label>` : ""}${c.countSet ? "" : `<button class="small" data-act="countJust" data-lid="${c.id}">Just these ${n}</button>`}</div>
-    ${more > 0 ? `<span class="note">${plural(more, "card is", "cards are")} not listed one by one. ${Number(c.extraEach) > 0 ? `They add ${money(more * Number(c.extraEach))} to the cards' total before the lot discount.` : "The lot has no price until you give them a value each, type the lot price in Ask, or run Double-check prices, which prices the lot on its full count."}</span>` : ""}</div>`;
+    ${more > 0 ? `<span class="note">${plural(more, "card is", "cards are")} not listed one by one. ${Number(c.extraEach) > 0 ? `They add ${money(more * Number(c.extraEach))} to the cards' total before the lot discount.` : c.fixed && priceOf(c) ? "The ask covers the whole lot." : "The lot has no price until you give them a value each, type the lot price in Ask, or tap Price this lot properly below."}</span>` : ""}</div>`;
 }
 function setLotCount(lot, count, unique){
   if(!lot) return;
@@ -2616,7 +2636,7 @@ function numberPanel(){
   const t = numberComment(), lots = S.cards.filter(c => c.isLot && inSale(c));
   if(!lots.length) return "";
   const W = ui.wantOut;
-  return `<div class="panel" id="numbercomment"><h2>Card-number comment</h2>
+  return `<div class="panel" id="numbercomment" data-jump="Card numbers"><h2>Card-number comment</h2>
     ${t ? `<p class="note">A second comment with every card number in each inventoried lot, so set builders can search it for what they need.</p>
       <label class="inline"><input type="checkbox" id="set-invMissing" ${S.settings.invMissing ? "checked" : ""}> Also list the numbers each lot is missing</label>
       <textarea id="out-numbers" readonly style="min-height:200px">${esc(t)}</textarea><div class="row"><button class="primary" data-copy="out-numbers">Copy card-number comment</button></div>`
@@ -2660,6 +2680,97 @@ function goalPanel(){
     <div class="row"><button class="primary" data-act="goalSave">${S.goal ? "Save the plan" : "Start with this plan"}</button>${S.goal ? `<button class="small" data-act="goalCancel">Cancel</button>` : `<button class="small" data-act="goalSkip">Skip for now</button>`}</div></div>`;
 }
 
+/* ---------- year-lot analysis: priced the way lots sell, not as a sum of singles ---------- */
+const money2 = v => v != null && !isNaN(Number(v)) ? "$" + Number(v).toFixed(2) : "";
+function lotPayload(c){
+  const lh = lotHobby(c), inv = c.inv ? invInfo(c) : null, hs = hobbySet(c.members[0] || {});
+  const past = (S.sales || []).flatMap(s => s.items.filter(i => i.kind === "lot").map(i => ({lot:i.t, cards:i.n, ask:i.ask, sold:i.sold, date:new Date(s.date).toISOString().slice(0, 10)}))).slice(0, 12);
+  return {name:c.player.replace(/\s*\(\d+ cards?\)$/, ""), yearSet:yearOf(c) || "mixed years", count:lotN(c), different:c.unique || (inv ? inv.unique : null), setSize:hs ? hs.h.size : null, highNumbers:lh.highs, condition:lotCond(c),
+    listed:c.members.slice(0, 80).map(m => ({card:lineName(m), grade:m.grade || "", flaws:m.flaws || "", value:m.aiLow != null && m.aiHigh != null ? [m.aiLow, m.aiHigh] : null, notes:hobbyShort(m) || undefined})),
+    keyCards:lh.keys.map(x => x.label), stars:lh.stars, inventory:inv ? {different:inv.unique, keysIn:inv.keysIn.map(([n, t]) => "#" + n + " " + t), highs:inv.highs} : null, currentAsk:priceOf(c), pastLotSales:past};
+}
+async function lotEval(lot){
+  if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
+  const name = lot.player.replace(/\s*\(\d+ cards?\)$/, "");
+  ui.busy = `Analyzing ${name}: count, set coverage, stars, keys, condition and recent lot sales. This can take a minute or two.`; ui.lotFor = lot.id; ui.cmdMsg = ui.busy; render();
+  try{
+    const r = (await ai("lotprice", {lot:lotPayload(lot), discount:Number(S.settings.discount) || 0})) || {};
+    lot.lotEval = {at:Date.now(), price:Number(r.price) > 0 ? roundP(Number(r.price)) : null, low:Number(r.low) || null, high:Number(r.high) || null, perCommon:Number(r.perCommon) || null,
+      breakdown:(Array.isArray(r.breakdown) ? r.breakdown : []).slice(0, 8).map(b => ({label:String(b && b.label || ""), amount:b && b.amount != null && !isNaN(Number(b.amount)) ? Number(b.amount) : null})).filter(b => b.label),
+      pullOut:(Array.isArray(r.pullOut) ? r.pullOut : []).map(String).slice(0, 5), why:String(r.why || ""), evidence:Array.isArray(r.evidence) ? r.evidence.slice(0, 4) : []};
+    ui.cmdMsg = lot.lotEval.price ? `Lot analysis for ${name}: ${money(lot.lotEval.price)}. It is with the lot on the Sale tab; tap Use to make it the ask.` : "The analysis came back without a price. Try Analyze again.";
+    save();
+  }catch(e){ ui.cmdMsg = "The lot analysis did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; ui.lotFor = ""; render();
+}
+async function lotEvalAll(){
+  const lots = S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c));
+  for(const l of lots){ await lotEval(l); if(!l.lotEval) break; }
+}
+function lotEvalBox(c){
+  const e = c.lotEval, busy = ui.busy && ui.lotFor === c.id;
+  return `<div class="countbox ${e ? "check result" : ""}">${e ? `<span><strong>Lot analysis: ${money(e.price) || "no price"}</strong>${e.low && e.high ? ` (likely ${money(e.low)} to ${money(e.high)})` : ""}${e.perCommon ? `, commons at about ${money2(e.perCommon)} each` : ""}.</span>
+      ${e.breakdown.length ? `<ul class="chg">${e.breakdown.map(b => `<li>${esc(b.label)}${b.amount != null ? ": " + money(b.amount) : ""}</li>`).join("")}</ul>` : ""}
+      ${e.why ? `<span>${esc(e.why)}</span>` : ""}
+      ${e.pullOut.length ? `<span><strong>Consider selling alone:</strong> ${esc(e.pullOut.join("; "))}</span>` : ""}
+      ${evidenceList(e)}
+      <div class="row">${e.price && e.price !== priceOf(c) ? `<button class="small primary" data-act="lotUse" data-lid="${c.id}">Use ${money(e.price)}</button>` : e.price ? `<span class="chip ok">this is the ask</span>` : ""}<button class="small" data-act="lotEval" data-lid="${c.id}" ${ui.busy ? "disabled" : ""}>Analyze again</button></div>`
+    : `<div class="row"><button class="small primary" data-act="lotEval" data-lid="${c.id}" ${ui.busy ? "disabled" : ""}>Price this lot properly</button><span class="note">The ask above is a quick estimate. This looks at the count, set coverage, stars, key cards, high numbers, condition and recent lot sales, the way year lots actually sell.</span></div>`}
+    ${busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ""}</div>`;
+}
+
+/* ---------- notes read from photos: "120 cards" next to a stack becomes the lot's count ---------- */
+const noteCount = t => { const m = /(\d{2,4})\s*(?:cards?|cds|ct\b|pcs|count)/i.exec(String(t || "")); return m ? +m[1] : null; };
+function addPhotoNote(text, about){
+  text = text.trim().slice(0, 200); if(!text) return;
+  S.photoNotes = S.photoNotes || [];
+  if(!S.photoNotes.some(n => n.text === text && n.about === about)) S.photoNotes.push({text, about:about.slice(0, 200), at:Date.now()});
+  S.photoNotes = S.photoNotes.slice(-60);
+}
+const noteYear = n => { const m = /\b(19[3-8]\d)\b/.exec(n.text + " " + n.about); return m ? m[1] : ""; };
+function noteFor(lot){ const y = String((lot.members[0] || {}).year || ""); return (S.photoNotes || []).map((n, i) => [n, i]).find(([n]) => !n.done && noteCount(n.text) && (!noteYear(n) || noteYear(n) === y)); }
+function notesBox(){
+  const ns = (S.photoNotes || []).map((n, i) => [n, i]).filter(([n]) => !n.done); if(!ns.length) return "";
+  const lots = S.cards.filter(c => c.isLot && c.status === "open");
+  return `<div class="panel pick" data-jump="Photo notes"><h2>Notes read from your photos <span class="note">${ns.length}</span></h2><p class="note">Handwritten or printed notes the scan found. A count can become a lot's card count.</p>
+    <ul class="cards">${ns.map(([n, i]) => { const k = noteCount(n.text), y = noteYear(n), guess = lots.find(l => y && String((l.members[0] || {}).year) === y);
+      return `<li><div><div class="ttl">"${esc(n.text)}"</div>${n.about ? `<div class="meta">${esc(n.about)}</div>` : ""}</div><div class="nums">${k && lots.length ? `<select data-notelot="${i}">${lots.map(l => `<option value="${l.id}" ${guess === l ? "selected" : ""}>${esc(l.player)}</option>`).join("")}</select><button class="small primary" data-act="noteUse" data-i="${i}">Use ${k} as its count</button>` : k ? `<span class="note">Make the lot first, then use this count.</span>` : ""}<button class="small" data-act="noteDone" data-i="${i}">Dismiss</button></div></li>`; }).join("")}</ul></div>`;
+}
+
+/* ---------- duplicates: photos already scanned, and cards already in the inventory ---------- */
+async function imgHash(file){
+  try{
+    const b = await createImageBitmap(file), cv = document.createElement("canvas"); cv.width = 36; cv.height = 32;
+    const g = cv.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(b, 0, 0, 36, 32);
+    const t = document.createElement("canvas"); t.width = 9; t.height = 8; const tg = t.getContext("2d"); tg.drawImage(cv, 0, 0, 9, 8);
+    const d = tg.getImageData(0, 0, 9, 8).data; let bits = "";
+    for(let y = 0; y < 8; y++) for(let x = 0; x < 8; x++){ const i = (y * 9 + x) * 4, j = i + 4; bits += d[i] + d[i + 1] + d[i + 2] > d[j] + d[j + 1] + d[j + 2] ? "1" : "0"; }
+    return bits;
+  }catch(e){ return ""; }
+}
+const hamming = (a, b) => { let n = 0; for(let i = 0; i < a.length; i++) if(a[i] !== b[i]) n++; return n; };
+const seenBefore = h => h ? (S.imgSeen || []).find(x => x.h && hamming(x.h, h) <= 6) : null;
+function dupBox(){
+  const d = ui.dupAsk; if(!d) return "";
+  const seen = d.hashes.map(seenBefore), n = seen.filter(Boolean).length, rest = d.files.length - n;
+  return `<div class="check"><span><strong>${n === d.files.length ? (n === 1 ? "This photo looks" : "These photos look") : `${n} of these ${d.files.length} photos look`} like ${n === 1 ? "one" : "ones"} you already scanned</strong> (${esc([...new Set(seen.filter(Boolean).map(x => dshort(x.at)))].join(", "))}). Scanning again adds the same cards a second time.</span>
+    <div class="row">${rest ? `<button class="small primary" data-act="dupSkip">Skip ${n === 1 ? "it" : "those"}, scan the other ${rest}</button>` : `<button class="small primary" data-act="dupCancel">Don't scan ${n === 1 ? "it" : "them"}</button>`}<button class="small" data-act="dupAll">Scan anyway</button></div></div>`;
+}
+function dupLine(c){
+  const f = c.dupOf && findCard(c.dupOf); if(!f) return "";
+  return `<div class="check"><span><strong>Possible duplicate.</strong> You already have ${esc(title(f.c))}${f.lot ? " in " + esc(f.lot.player) : f.c.section ? " in " + esc(f.c.section) : ""}. Scanning the same photo twice, or two shots of one card, does this.</span>
+    <div class="row"><button class="small danger" data-act="dupRemove">Remove this one</button><button class="small" data-act="dupKeep">Keep both, they are different copies</button></div></div>`;
+}
+
+/* ---------- jump bar: tabs and the sections of the current tab, always in reach ---------- */
+function buildJump(){
+  const bar = $("#jumpbar"); if(!bar) return;
+  const view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : "inventory";
+  const tabs = [["inventory", "Review", toDecide().filter(c => !c.example).length], ["sale", "Sale", S.cards.filter(inSale).length], ["post", "Post", 0], ["photos", "Photos", (ui.photos || []).length], ["claims", "Claims", S.cards.filter(c => c.status === "claimed").length], ["ship", "Ship", 0], ["sold", "History", 0]].filter(t => VIEWS[t[0]]);
+  const secs = [...document.querySelectorAll("#" + bar.parentNode.id + " [data-jump]")];
+  bar.innerHTML = `<div class="jt">${tabs.map(([h, l, n]) => `<a href="#${h}" class="${h === view ? "on" : ""}">${l}${n ? ` <span>${n}</span>` : ""}</a>`).join("")}</div>${secs.length > 1 ? `<div class="js">${secs.map((s, i) => `<button data-act="jump" data-i="${i}">${esc(s.dataset.jump)}</button>`).join("")}</div>` : ""}`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2669,8 +2780,8 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
-  stat();
+  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + goalPanel() + progressBar() + clearPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
+  stat(); buildJump();
   if(name === "photos") drawPhoto();
   renderAuth();
   if(name === "sold" && ui.community == null && !ui.communityMsg) loadCommunity();
@@ -2685,6 +2796,7 @@ document.addEventListener("click", async e => {
   const el = e.target.closest("[data-act]"); if(!el) return;
   const act = el.dataset.act, li = el.closest("li[data-id]"), c = li && S.cards.find(x => x.id === li.dataset.id);
   if(act === "pick") return $("#file").click();
+  if(act === "jump"){ const t = document.querySelectorAll("[data-jump]")[+el.dataset.i]; if(t) t.scrollIntoView({behavior:"smooth", block:"start"}); return; }
   if(act === "backPick"){ const row = el.closest("li[data-id]"); if(row){ ui.backFor = row.dataset.id; $("#backfile").click(); } return; }
   if(act === "ppick") return $("#pfile").click();
   if(act === "gpick") return $("#gfile").click();
@@ -2747,6 +2859,16 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "lotEval"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot) return lotEval(f.c); }
+  else if(act === "lotEvalAll") return lotEvalAll();
+  else if(act === "lotUse"){ const f = findCard(el.dataset.lid); if(f && f.c.lotEval && f.c.lotEval.price){ f.c.price = f.c.lotEval.price; f.c.fixed = true; ui.cmdMsg = `${f.c.player} now asks ${money(f.c.price)}.`; } }
+  else if(act === "noteUse"){ const n = (S.photoNotes || [])[+el.dataset.i], sel = el.closest("li") && el.closest("li").querySelector("select"), lid = el.dataset.lid || (sel && sel.value), f = lid && findCard(lid); if(n && f && f.c.isLot){ setLotCount(f.c, noteCount(n.text)); n.done = true; ui.cmdMsg = `${f.c.player.replace(/\s*\(\d+ cards?\)$/, "")} now counts ${lotN(f.c)} cards, from your photo note.`; } }
+  else if(act === "noteDone"){ const n = (S.photoNotes || [])[+el.dataset.i]; if(n) n.done = true; }
+  else if(act === "dupSkip" && ui.dupAsk){ const d = ui.dupAsk, keep = d.files.filter((f, i) => !seenBefore(d.hashes[i])); ui.dupAsk = null; return scan(keep, {skipDup:true}); }
+  else if(act === "dupAll" && ui.dupAsk){ const d = ui.dupAsk; ui.dupAsk = null; return scan(d.files, {skipDup:true}); }
+  else if(act === "dupCancel"){ ui.dupAsk = null; }
+  else if(act === "dupRemove" && c){ S.cards = S.cards.filter(x => x !== c); ui.cmdMsg = "Removed the duplicate."; }
+  else if(act === "dupKeep" && c){ delete c.dupOf; }
   else if(act === "goalEdit"){ ui.goalEdit = true; ui.goalDraft = S.goal || ""; }
   else if(act === "goalBit"){ goalAdd(GOAL_BITS[+el.dataset.i]); }
   else if(act === "goalPreset"){ ui.goalDraft = PRESETS[+el.dataset.i]; }
@@ -2867,7 +2989,7 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("change", e => {
   const t = e.target;
-  if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) (ui.oneCard ? scanOne(f) : scan(f)); return; }
+  if(t.id === "file"){ const f = [...t.files]; t.value = ""; if(f.length) (ui.oneCard ? scanOne(f) : scan(f, {})); return; }
   if(t.dataset.sel){ if(t.checked) ui.sel.add(t.dataset.sel); else ui.sel.delete(t.dataset.sel); return render(); }
   if(t.id === "pageprice"){ ui.pagePrice = t.value; return; }
   if(t.id === "plistfile"){ const fs = [...t.files]; t.value = ""; if(fs.length) priceList(fs); return; }
