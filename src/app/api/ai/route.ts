@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -45,6 +45,10 @@ export async function POST(req: Request) {
     const sale = Array.isArray(payload.sale) ? payload.sale : [];
     if (!sale.length || sale.length > 60) return fail(400, "The sale is empty or too large.");
     prompt = postCopyPrompt(sale, String(payload.plan ?? "").slice(0, 2000));
+  } else if (task === "learnpost") {
+    const post = String(payload.text ?? "").slice(0, 30000);
+    if (!post.trim()) return fail(400, "Paste a post first.");
+    prompt = learnPostPrompt(post, String(payload.known ?? "").slice(0, 4000));
   } else if (task === "pricelist") {
     const cards = Array.isArray(payload.cards) ? payload.cards : [], listText = String(payload.text ?? "").slice(0, 20000);
     if (!cards.length || cards.length > 500) return fail(400, "The photo has no cards or too many.");
@@ -77,6 +81,7 @@ export async function POST(req: Request) {
     if (!text || text.length > 40_000 || lots.length > 1000) return fail(400, "Thread text is missing or too long.");
     prompt = claimsPrompt(lots, text);
   }
+  prompt = withReference(task, prompt, payload);
 
   // Per-user daily cap, so one account cannot run up the bill.
   const client = db();

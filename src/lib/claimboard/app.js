@@ -59,7 +59,8 @@ async function api(path, {method = "GET", json, form} = {}){
 }
 function ai(task, payload, images){
   const form = new FormData();
-  form.append("task", task); form.append("payload", JSON.stringify(payload || {}));
+  const ref = ["scan", "locate", "plan", "pricecheck", "postcopy", "edit"].includes(task) ? {facts:factsFor(task), style:task === "postcopy" ? String(S.settings.styleNotes || "") : undefined} : {};
+  form.append("task", task); form.append("payload", JSON.stringify({...(payload || {}), ...ref}));
   (images || []).forEach((b, i) => form.append("images", b, "image-" + i + ".jpg"));
   return api("/api/ai", {method:"POST", form});
 }
@@ -244,7 +245,7 @@ function rowInv(c){
   return `<li data-id="${c.id}">
     <div class="pickrow"><input type="checkbox" data-sel="${c.id}" aria-label="Select ${esc(title(c))}" ${ui.sel.has(c.id) ? "checked" : ""}><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed</span>` : ""}${c.section ? ` <span class="chip ok">${esc(c.section)}</span>` : ""}</div>
       <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>
-      ${valueLine(c)}${histLine(c)}</div></div>
+      ${hobbyLine(c)}${valueLine(c)}${histLine(c)}</div></div>
     <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}"></label></div>
     ${undecided ? `<div class="links acts"><button class="small primary" data-act="qSingle">Single</button><button class="small" data-act="qPage">${money(numOrNull(ui.pagePrice) || 10)} page</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}</div>` : ""}
     ${needsCheck(c) ? checkBox(c) : ""}
@@ -523,6 +524,7 @@ function whyLines(c){
     const sum = c.members.reduce((a, m) => a + (priceOf(m) || 0), 0), b = Number(S.settings.lotDiscount ?? 10);
     out.push(["In this lot", c.members.map(m => title(m) + (priceOf(m) != null ? " " + money(priceOf(m)) : " (no price)")).join("; ")]);
     out.push(["Lot price", c.members.some(m => priceOf(m) == null) ? "Not set, because at least one card inside has no price." : `The cards' asks add up to ${money(sum)}. Less the ${b}% bundle discount and rounded, that is ${money(roundP(sum * (1 - b / 100)))}.` + (p !== roundP(sum * (1 - b / 100)) ? ` You changed it to ${money(p)}.` : "")]);
+    const lh = lotHobbyText(c); if(lh) out.push(["Hobby notes", lh.replace(/^./, ch => ch.toUpperCase()) + "."]);
     out.push(["Why a lot", c.why || (c.manual ? "You grouped these by hand." : "Grouped by the sale plan.")]);
     return out;
   }
@@ -538,6 +540,7 @@ function whyLines(c){
   if(c.pin === "page") out.push(["Reddit ask", `${money(p)}, the page price.` + (auto != null ? ` Priced alone it would be ${money(auto)}.` : "")]);
   else if(c.price != null) out.push(["Reddit ask", `${money(p)}, typed by you.` + (auto != null ? ` The worked-out ask would be ${money(auto)}.` : "")]);
   else if(basis != null) out.push(["Reddit ask", `${c.comp != null ? "Sold comp" : "Midpoint of the value range"} ${money(Math.round(basis))}, less ${d}% because there are no platform fees, rounded to ${money(auto)}.`]);
+  const hb = hobbyFor(c); if(hb.length) out.push(["Hobby notes", hb.map(x => x.t).join(" ")]);
   histWhy(c).forEach(x => out.push(x));
   const min = singleMin();
   if(c.section || c.pin) out.push(["Placement", c.pin === "page" ? `On the ${c.section} page${c.manual ? ", placed by you" : ", placed by the sale plan"}.` : c.pin === "single" ? `A single${c.manual ? ", placed by you" : ", agreed by you from the suggestions"}.` : c.pin === "lot" ? "Kept for a lot, your choice." : `In "${c.section}", placed by the sale plan.`]);
@@ -916,7 +919,8 @@ function historyPanels(){
     <div class="row"><button class="primary" data-act="learn" ${ui.busy ? "disabled" : ""}>Add to my reference</button><span class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.learnMsg || "")}</span></div>
     ${subs.length ? `<p class="note">${subs.length} prices collected, ${subs.filter(s => s.sold).length} marked sold. The search box below filters this list too. <button class="small danger" data-act="clearSubs">Clear them all</button></p>
       <div class="scroll"><table><thead><tr><th>Card</th><th>Grade</th><th class="num">Price</th><th>Result</th></tr></thead><tbody>${subs.filter(hit).slice(0, 150).map(r => `<tr><td>${esc(title(r))}</td><td>${esc(r.grade)}</td><td class="num">${money(r.price)}</td><td>${r.sold ? "sold" : "listed"}</td></tr>`).join("")}</tbody></table></div>` : ""}
-  </div>`;
+  </div>
+  ${knowPanel()}`;
 }
 const tm = t => new Date(t).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
 function stat(){ const el = $("#savestat"); if(el) el.textContent = [ui.localErr || (ui.localAt ? "Saved on this device " + tm(ui.localAt) : ""), ui.cloudMsg || ""].filter(Boolean).join(" · "); }
@@ -1467,12 +1471,13 @@ function resultBox(c){
 function rowSale(c){
   const p = priceOf(c);
   return `<li data-id="${c.id}"><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
-      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div></div>
+      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>${hobbyLine(c)}</div>
     <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}" ${c.status === "open" ? "" : "disabled"}></label>
       ${c.status !== "open" ? "" : c.isLot ? `<button class="small" data-act="unlot">Break apart</button>` : `<button class="small" data-act="takeOut">Take out</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}`}</div>
     ${resultBox(c)}
     ${rqBox(c)}
     ${whyBox(c)}
+    ${c.isLot && c.status === "open" ? `<label class="inline"><input type="checkbox" data-split="${c.id}" ${c.splitOk ? "checked" : ""}> Cards in this lot can also be bought one at a time</label>` : ""}
     ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
   </li>`;
 }
@@ -1810,18 +1815,21 @@ function condShort(c){
 const lineName = c => [c.year, c.set, c.num ? "#" + c.num : "", c.player, c.variation ? "(" + c.variation + ")" : ""].filter(Boolean).join(" ");
 const lotTagText = (c, a) => c.tagText || "All " + c.members.length + " for " + (a != null ? money(a) : "a price to come");
 function priceComment(){
+  if(S.settings.commentStyle === "lines") return priceCommentLines();
   const st = S.settings, items = ordered().filter(inSale);
   const strike = (t, c) => c.status === "sold" ? "~~" + t + "~~ **SOLD**" : c.status === "claimed" ? t + " (pending)" : t;
   const block = c => {
     const a = priceOf(c);
-    if(!c.isLot) return "- " + strike(`${lineName(c)}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n";
+    if(!c.isLot) return "- " + strike(`${lineName(c)}${hobbyShort(c) ? " (" + hobbyShort(c) + ")" : ""}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n";
     const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
     let t = "\n" + strike(`**${name}, ${n} cards - ${lotTagText(c, a)}**`, c) + "\n\n";
-    for(const m of c.members) t += `- ${lineName(m)}${condShort(m) ? " - " + condShort(m) : ""}\n`;
+    for(const m of c.members) t += `- ${lineName(m)}${hobbyShort(m) ? " (" + hobbyShort(m) + ")" : ""}${condShort(m) ? " - " + condShort(m) : ""}\n`;
     const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
     t += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
       ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
       : "No creases, writing or paper loss that I can see.") + "\n\n";
+    const lh = lotHobby(c);
+    if(lh.highs || lh.keys.length) t += [lh.highs ? `Includes ${plural(lh.highs, "high number", "high numbers")}.` : "", lh.keys.length ? "Key cards: " + lh.keys.slice(0, 10).map(x => x.label).join(", ") + "." : ""].filter(Boolean).join(" ") + "\n\n";
     return t;
   };
   let out = "";
@@ -1852,6 +1860,8 @@ function commentPanel(){
   return `<div class="panel" id="pricecomment"><h2>Reddit price comment</h2>
     <p class="note">The whole sale in order: year, set, number and name, a short condition summary and the ask. Lots list every card, their grades and any issues. It updates whenever the sale changes.</p>
     ${photosWithCards().length ? `<label class="inline"><input type="checkbox" id="set-commentByPhoto" ${S.settings.commentByPhoto ? "checked" : ""}> Order by photo (photo 1 first, cards left to right)</label>` : ""}
+    <div class="row"><label class="inline">Layout <select id="set-commentStyle"><option value="list" ${S.settings.commentStyle !== "lines" ? "selected" : ""}>One line per card</option><option value="lines" ${S.settings.commentStyle === "lines" ? "selected" : ""}>Lot headers, prices on one line</option></select></label>
+      <label class="inline">Take everything $<input class="money" id="set-takeAll" inputmode="decimal" value="${esc(S.settings.takeAll || "")}" placeholder="${roundP(ordered().filter(inSale).filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0) * .85) || ""}"> <span class="note">blank to leave out</span></label></div>
     <textarea id="out-comment" readonly style="min-height:320px">${esc(priceComment())}</textarea>
     <div class="row"><button class="primary" data-copy="out-comment">Copy price comment</button></div></div>`;
 }
@@ -1920,7 +1930,7 @@ async function writeCopy(){
   if(!cap.ai){ ui.cmdMsg = aiOff(); return render(); }
   ui.busy = "Writing the title and description"; render();
   try{
-    const sale = items.slice(0, 40).map(c => ({item:c.isLot ? c.player : lineName(c), kind:c.isLot ? "lot of " + c.members.length : c.pin === "page" ? "price page card" : "single", grade:c.isLot ? "" : c.grade || "", ask:priceOf(c)}));
+    const sale = items.slice(0, 40).map(c => ({item:c.isLot ? c.player : lineName(c), kind:c.isLot ? "lot of " + c.members.length : c.pin === "page" ? "price page card" : "single", section:c.section || "", grade:c.isLot ? lotCond(c) : c.grade || "", notes:c.isLot ? lotHobbyText(c) : hobbyShort(c), ask:priceOf(c)}));
     const plan = S.plan && S.plan.text ? String(S.plan.text) : "";
     const r = (await ai("postcopy", {sale, plan})) || {};
     ui.copyOpts = {titles:(Array.isArray(r.titles) ? r.titles : []).map(String).filter(Boolean).slice(0, 3), intro:String(r.intro || "")};
@@ -2217,6 +2227,206 @@ async function startOver(){
   if(location.hash !== "#inventory") location.hash = "#inventory"; else render();
 }
 
+/* ---------- hobby know-how: the built-in reference. Facts only; the seller's own notes are added on top ---------- */
+const HOBBY = {
+  "1948 Bowman": {size:48, keys:{6:"Yogi Berra rookie", 36:"Stan Musial rookie"}, note:"Black-and-white set."},
+  "1949 Bowman": {size:240, high:[145, 240, "strong"], keys:{50:"Jackie Robinson", 84:"Roy Campanella rookie", 224:"Satchel Paige (high number)", 226:"Duke Snider rookie (high number)"}},
+  "1951 Bowman": {size:324, high:[253, 324, "strong"], keys:{1:"Whitey Ford rookie", 253:"Mickey Mantle rookie (high number)", 305:"Willie Mays rookie (high number)"}},
+  "1952 Bowman": {size:252, keys:{101:"Mickey Mantle", 218:"Willie Mays"}},
+  "1953 Bowman Color": {size:160, high:[113, 160, "strong"], keys:{33:"Pee Wee Reese", 59:"Mickey Mantle"}, note:"Photo cards with no printed names on the front."},
+  "1954 Bowman": {size:224, keys:{65:"Mickey Mantle", 66:"Ted Williams (pulled from the set, scarce)"}, vars:{66:"Ted Williams was pulled and replaced by Jimmy Piersall, also numbered 66"}},
+  "1955 Bowman": {size:320, high:[225, 320, "mild"], keys:{184:"Willie Mays", 202:"Mickey Mantle"}, note:"TV-set design. The last series includes the umpire cards."},
+  "1952 Topps": {size:407, high:[311, 407, "strong"], semi:[251, 310], keys:{1:"Andy Pafko (first card, rarely sharp)", 261:"Willie Mays", 311:"Mickey Mantle (high number)", 312:"Jackie Robinson (high number)", 333:"Pee Wee Reese (high number)", 407:"Eddie Mathews rookie (high number, last card)"}, range:[[1, 80, "Cards #1-80 come with red or black backs"]], note:"The high numbers are the key series of the postwar era."},
+  "1953 Topps": {size:274, top:280, skip:[253, 261, 267, 268, 271, 275], high:[221, 280, "strong"], keys:{1:"Jackie Robinson", 82:"Mickey Mantle", 220:"Satchel Paige", 244:"Willie Mays (high number)"}, note:"Numbered to 280, but six numbers were never issued."},
+  "1954 Topps": {size:250, keys:{1:"Ted Williams", 94:"Ernie Banks rookie", 128:"Hank Aaron rookie", 201:"Al Kaline rookie", 250:"Ted Williams (last card)"}, note:"No high-number premium."},
+  "1955 Topps": {size:206, top:210, skip:[175, 186, 203, 209], high:[161, 210, "strong"], keys:{123:"Sandy Koufax rookie", 124:"Harmon Killebrew rookie", 164:"Roberto Clemente rookie (high number)", 210:"Duke Snider (high number, last card)"}, note:"Numbered to 210, but four numbers were never issued."},
+  "1956 Topps": {size:340, keys:{33:"Roberto Clemente", 79:"Sandy Koufax", 135:"Mickey Mantle"}, range:[[1, 180, "Cards #1-180 come with gray or white backs"]]},
+  "1957 Topps": {size:407, high:[265, 352, "strong"], highName:"Scarce series", keys:{95:"Mickey Mantle", 302:"Sandy Koufax (scarce series)", 328:"Brooks Robinson rookie (scarce series)", 407:"Yankees Power Hitters, Mantle and Berra"}, vars:{20:"Hank Aaron: reversed-negative error, shown batting left-handed"}, note:"The third and fourth series (#265-352) are the hard ones, not the last series. First Topps set at today's card size."},
+  "1958 Topps": {size:494, keys:{47:"Roger Maris rookie", 52:"Roberto Clemente", 150:"Mickey Mantle", 418:"World Series Batting Foes, Mantle and Aaron"}, range:[[2, 108, "Some cards #2-108 have yellow-letter name or team variations, worth more"]]},
+  "1959 Topps": {size:572, high:[507, 572, "strong"], keys:{10:"Mickey Mantle", 338:"Sparky Anderson rookie", 514:"Bob Gibson rookie (high number)", 550:"Symbol of Courage, Roy Campanella (high number)"}},
+  "1960 Topps": {size:572, high:[507, 572, "strong"], keys:{136:"Jim Kaat rookie", 148:"Carl Yastrzemski rookie", 316:"Willie McCovey rookie", 350:"Mickey Mantle"}, note:"The All-Star cards sit in the high series."},
+  "1961 Topps": {size:587, top:589, skip:[587, 588], high:[523, 589, "strong"], keys:{2:"Roger Maris", 300:"Mickey Mantle", 417:"Juan Marichal rookie"}, note:"The high numbers are among the toughest of the decade."},
+  "1962 Topps": {size:598, high:[523, 598, "strong"], keys:{1:"Roger Maris", 10:"Roberto Clemente", 200:"Mickey Mantle", 387:"Lou Brock rookie", 530:"Bob Gibson (short-printed high number)"}, note:"Wood-grain borders show every chip, so sharp copies carry a big premium."},
+  "1963 Topps": {size:576, high:[507, 576, "strong"], keys:{200:"Mickey Mantle", 537:"Pete Rose rookie (high number)", 553:"Willie Stargell rookie (high number)"}},
+  "1964 Topps": {size:587, high:[523, 587, "strong"], keys:{29:"Lou Brock", 50:"Mickey Mantle", 125:"Pete Rose", 287:"Tony Conigliaro rookie"}},
+  "1965 Topps": {size:598, high:[523, 598, "strong"], keys:{16:"Joe Morgan rookie", 282:"Masanori Murakami rookie, the first Japanese major leaguer (Giants Rookie Stars)", 350:"Mickey Mantle", 477:"Steve Carlton rookie", 526:"Catfish Hunter rookie (high number)", 581:"Tony Perez rookie (high number)"}},
+  "1966 Topps": {size:598, high:[523, 598, "strong"], keys:{50:"Mickey Mantle", 126:"Jim Palmer rookie", 254:"Fergie Jenkins rookie (with Bill Sorrell)", 288:"Don Sutton rookie"}, note:"The high series has short prints."},
+  "1967 Topps": {size:609, high:[534, 609, "strong"], keys:{150:"Mickey Mantle", 355:"Carl Yastrzemski", 569:"Rod Carew rookie (high number)", 581:"Tom Seaver rookie (high number)"}, note:"The high series has many short prints and is the toughest of the decade."},
+  "1968 Topps": {size:598, high:[534, 598, "mild"], keys:{177:"Nolan Ryan rookie (with Jerry Koosman)", 247:"Johnny Bench rookie", 280:"Mickey Mantle"}, note:"Burlap-pattern borders."},
+  "1969 Topps": {size:664, high:[589, 664, "mild"], keys:{260:"Reggie Jackson rookie", 500:"Mickey Mantle, his last regular Topps card", 533:"Nolan Ryan"}, vars:{500:"Mantle comes in a white-letter variation that sells for more"}, note:"Some cards have white-letter name variations, worth more."},
+  "1970 Topps": {size:720, high:[634, 720, "strong"], semi:[547, 633], keys:{21:"Vida Blue and Gene Tenace, Rookie Stars", 189:"Thurman Munson rookie", 250:"Johnny Bench", 600:"Willie Mays (semi-high)", 712:"Nolan Ryan (high number)"}, note:"Gray borders."},
+  "1971 Topps": {size:752, high:[644, 752, "strong"], semi:[524, 643], keys:{5:"Thurman Munson", 341:"Steve Garvey rookie", 513:"Nolan Ryan"}, note:"Black borders chip easily, so sharp copies are scarce and condition drives price."},
+  "1972 Topps": {size:787, high:[657, 787, "strong"], semi:[526, 656], keys:{37:"Carl Yastrzemski", 49:"Willie Mays", 79:"Carlton Fisk rookie (with Cecil Cooper)", 299:"Hank Aaron", 309:"Roberto Clemente", 433:"Johnny Bench", 435:"Reggie Jackson", 559:"Pete Rose", 595:"Nolan Ryan", 695:"Rod Carew (high number)"}, note:"In Action cards follow many stars, and there is a Boyhood Photos of the Stars subset."},
+  "1973 Topps": {size:660, high:[529, 660, "mild"], keys:{1:"All-Time Home Run Leaders: Ruth, Aaron, Mays", 50:"Roberto Clemente", 174:"Goose Gossage rookie", 615:"Mike Schmidt rookie (high number)"}},
+  "1974 Topps": {size:660, keys:{1:"Hank Aaron, All-Time Home Run King", 283:"Mike Schmidt", 456:"Dave Winfield rookie"}, note:"Issued all at once, so there are no high numbers. Some Padres cards say Washington, Nat'l Lea., a variation worth more."},
+  "1975 Topps": {size:660, keys:{223:"Robin Yount rookie", 228:"George Brett rookie", 616:"Jim Rice rookie (Rookie Outfielders)", 620:"Gary Carter rookie (Rookie Catchers-Outfielders)", 622:"Fred Lynn rookie (Rookie Outfielders)"}, note:"Two-color borders show wear. A smaller Mini version was issued too and is valued separately."},
+  "1976 Topps": {size:660, keys:{98:"Dennis Eckersley rookie", 316:"Robin Yount", 592:"Willie Randolph rookie"}},
+  "1977 Topps": {size:660, keys:{473:"Andre Dawson rookie", 476:"Dale Murphy rookie"}},
+  "1978 Topps": {size:726, keys:{36:"Eddie Murray rookie", 703:"Jack Morris rookie (Rookie Pitchers)", 704:"Lou Whitaker rookie (Rookie Second Basemen)", 707:"Paul Molitor and Alan Trammell rookie (Rookie Shortstops)", 708:"Dale Murphy and Lance Parrish (Rookie Catchers)"}},
+  "1979 Topps": {size:726, keys:{116:"Ozzie Smith rookie"}, vars:{369:"Bump Wills comes with a Blue Jays (error) and a Rangers (corrected) team name"}},
+  "1980 Topps": {size:726, keys:{482:"Rickey Henderson rookie"}},
+};
+const STARS = ["Hank Aaron","Willie Mays","Mickey Mantle","Roberto Clemente","Sandy Koufax","Bob Gibson","Tom Seaver","Nolan Ryan","Johnny Bench","Pete Rose","Carl Yastrzemski","Harmon Killebrew","Al Kaline","Brooks Robinson","Frank Robinson","Ernie Banks","Ted Williams","Billy Williams","Stan Musial","Yogi Berra","Whitey Ford","Don Drysdale","Juan Marichal","Willie McCovey","Lou Brock","Steve Carlton","Jim Palmer","Catfish Hunter","Gaylord Perry","Fergie Jenkins","Phil Niekro","Don Sutton","Rollie Fingers","Rod Carew","Joe Morgan","Tony Perez","Willie Stargell","Carlton Fisk","Reggie Jackson","Mike Schmidt","George Brett","Robin Yount","Gary Carter","Jim Rice","Andre Dawson","Eddie Murray","Paul Molitor","Alan Trammell","Dennis Eckersley","Dave Winfield","Ozzie Smith","Rickey Henderson","Ron Santo","Jim Kaat","Bill Mazeroski","Orlando Cepeda","Luis Aparicio","Hoyt Wilhelm","Jim Bunning","Duke Snider","Roy Campanella","Jackie Robinson","Pee Wee Reese","Satchel Paige","Warren Spahn","Eddie Mathews","Richie Ashburn","Ralph Kiner","Nellie Fox","Enos Slaughter","Robin Roberts","Early Wynn","Phil Rizzuto","Roger Maris","Thurman Munson","Steve Garvey","Dale Murphy","Dave Parker","Keith Hernandez","Bert Blyleven","Goose Gossage","Bruce Sutter","Ted Simmons","Jack Morris","Lou Whitaker","Fred Lynn","Tony Oliva","Dick Allen","Minnie Minoso","Gil Hodges","Joe Torre","Vida Blue","Rocky Colavito","Maury Wills","Mickey Lolich","Luis Tiant","Masanori Murakami"];
+const hnorm = v => String(v ?? "").trim().toLowerCase();
+function hobbySet(c){
+  const y = String(c.year || "").trim(), s = hnorm(c.set); if(!y || !s) return null;
+  const ks = Object.keys(HOBBY).filter(k => k.slice(0, 4) === y && s.startsWith(hnorm(k.slice(5))) ).sort((a, b) => b.length - a.length);
+  return ks.length ? {k:ks[0], h:HOBBY[ks[0]]} : null;
+}
+const cardNo = c => parseInt(String(c.num || "").replace(/[^0-9]/g, "")) || 0;
+function hobbyFor(c){
+  if(!c || c.isLot) return [];
+  const m = hobbySet(c), out = [], n = cardNo(c);
+  if(m){
+    const h = m.h;
+    if(n && h.high && n >= h.high[0] && n <= h.high[1]) out.push({k:"high", t:`${h.highName || "High number"} (#${h.high[0]}-${h.high[1]})${h.high[2] === "strong" ? ": a scarce series that sells at a premium." : ": a little scarcer than the rest of the set."}`});
+    else if(n && h.semi && n >= h.semi[0] && n <= h.semi[1]) out.push({k:"semi", t:`Semi-high number (#${h.semi[0]}-${h.semi[1]}), somewhat scarcer.`});
+    const key = n ? (h.keys || {})[n] : null;
+    if(key) out.push({k:/rookie/i.test(key) ? "rc" : "key", t:key + "."});
+    else if(!n && c.player){
+      const last = hnorm(c.player).split(/\s+/).pop(), hits = Object.entries(h.keys || {}).filter(([, v]) => last.length > 3 && hnorm(v).includes(last));
+      if(hits.length === 1) out.push({k:"maybe", t:`Could be #${hits[0][0]}, ${hits[0][1]}. Check the card number.`});
+    }
+    const v = n ? (h.vars || {})[n] : null; if(v) out.push({k:"var", t:v + "."});
+    for(const [a, b, t] of h.range || []) if(n && n >= a && n <= b) out.push({k:"var", t:t + "."});
+  }
+  for(const x of S.hobbyNotes || []) if(x.num && String(x.year) === String(c.year || "") && (!x.set || hnorm(c.set).startsWith(hnorm(x.set))) && String(x.num) === String(n)) out.push({k:"note", t:x.text});
+  return out;
+}
+function hobbyShort(c){ const h = hobbyFor(c); return [h.some(x => x.k === "rc") ? "RC" : "", h.some(x => x.k === "high") ? "high number" : ""].filter(Boolean).join(", "); }
+function lotHobby(lot){
+  const keys = [], stars = [], seen = new Set(); let highs = 0;
+  for(const m of lot.members || []){
+    const h = hobbyFor(m);
+    if(h.some(x => x.k === "high")) highs++;
+    const k = h.find(x => x.k === "rc" || x.k === "key");
+    if(k){ keys.push({m, label:`#${cardNo(m)} ${m.player}${k.k === "rc" ? " RC" : ""}`}); seen.add(hnorm(m.player)); }
+  }
+  for(const m of lot.members || []){ const p = hnorm(m.player); if(!seen.has(p) && STARS.some(s => p === hnorm(s) || p.startsWith(hnorm(s) + " "))){ seen.add(p); stars.push(m.player); } }
+  return {highs, keys, stars};
+}
+const lotHobbyText = lot => { const l = lotHobby(lot); return [l.highs ? plural(l.highs, "high number", "high numbers") : "", l.keys.length ? "key cards: " + l.keys.map(x => x.label).join(", ") : "", l.stars.length ? "stars: " + l.stars.slice(0, 10).join(", ") : ""].filter(Boolean).join("; "); };
+const HOBBY_LABEL = {rc:"RC", key:"key card", high:"high number", semi:"semi-high", var:"check variation", note:"your note", maybe:"key card?"};
+function hobbyLine(c){
+  if(c.isLot){ const t = lotHobbyText(c); return t ? `<div class="meta hobby">${esc(t.replace(/^./, ch => ch.toUpperCase()))}.</div>` : ""; }
+  const h = hobbyFor(c); if(!h.length) return "";
+  return `<div class="meta hobby">${h.map(x => `<span class="chip ${x.k === "rc" || x.k === "high" || x.k === "key" ? "ok" : x.k === "var" || x.k === "maybe" ? "warn" : ""}">${HOBBY_LABEL[x.k]}</span>`).join(" ")} ${esc(h.map(x => x.t).join(" "))}</div>`;
+}
+/* the reference notes sent with a task: every set briefly when reading photos, the sets in the sale in full otherwise */
+function factsFor(task){
+  const sets = new Set();
+  S.cards.forEach(c => (c.isLot ? c.members : [c]).forEach(m => { const x = hobbySet(m); if(x) sets.add(x.k); }));
+  const brief = task === "scan" || task === "locate" || !sets.size, lines = [];
+  for(const k of brief ? Object.keys(HOBBY) : [...sets]){
+    const h = HOBBY[k], parts = [`${k}: ${h.size} cards`];
+    if(h.high) parts.push(`${h.highName ? hnorm(h.highName) : "high numbers"} #${h.high[0]}-${h.high[1]} (${h.high[2] === "strong" ? "scarce, strong premium" : "mild premium"})`);
+    if(h.semi) parts.push(`semi-highs #${h.semi[0]}-${h.semi[1]}`);
+    if(!brief && h.keys) parts.push("key cards: " + Object.entries(h.keys).map(([n, t]) => "#" + n + " " + t).join("; "));
+    if(h.vars) parts.push("errors and variations: " + Object.entries(h.vars).map(([n, t]) => "#" + n + " " + t).join("; "));
+    for(const r of h.range || []) parts.push(r[2]);
+    if(!brief && h.note) parts.push(h.note);
+    lines.push(parts.join(". ") + ".");
+  }
+  for(const x of S.hobbyNotes || []) lines.push(`Seller's note${x.year ? " on " + [x.year, x.set, x.num ? "#" + x.num : ""].filter(Boolean).join(" ") : ""}: ${x.text}`);
+  return lines.join("\n").slice(0, 7800);
+}
+
+/* ---------- the know-how panel: look things up, add notes, learn from a post, check a partial set ---------- */
+function parseNums(t){ const out = new Set(); for(const m of String(t || "").matchAll(/(\d+)\s*(?:-|to)\s*(\d+)|(\d+)/g)){ if(m[3]) out.add(+m[3]); else for(let i = +m[1]; i <= +m[2] && i - +m[1] < 2000; i++) out.add(i); } return out; }
+function setCheck(){
+  const k = ui.knowSet, h = HOBBY[k]; if(!h) return "Pick a set first.";
+  const top = h.top || h.size, skip = new Set(h.skip || []), all = []; for(let i = 1; i <= top; i++) if(!skip.has(i)) all.push(i);
+  const raw = parseNums(ui.knowMiss), mode = ui.knowMode === "have" ? "have" : "miss";
+  const have = new Set(mode === "have" ? all.filter(n => raw.has(n)) : all.filter(n => !raw.has(n))), missing = all.filter(n => !have.has(n));
+  const inHigh = n => h.high && n >= h.high[0] && n <= h.high[1], low = all.filter(n => !inHigh(n)), hi = all.filter(inHigh);
+  const keys = Object.entries(h.keys || {}).map(([n, t]) => [+n, t]);
+  const L = [`${k} ${missing.length ? "partial set" : "complete set"}: ${have.size} of ${all.length} cards${missing.length ? ` (${missing.length} missing)` : ""}.`];
+  if(h.high){
+    L.push(`${h.high[1] < top ? "Other numbers" : "Low numbers"} (#1-${h.high[0] - 1}${h.high[1] < top ? ` and #${h.high[1] + 1}-${top}` : ""}): ${low.filter(n => have.has(n)).length} of ${low.length}.`);
+    L.push(`${h.highName || "High numbers"} (#${h.high[0]}-${h.high[1]}): ${hi.filter(n => have.has(n)).length} of ${hi.length}.`); }
+  const kin = keys.filter(([n]) => have.has(n)), kout = keys.filter(([n]) => !have.has(n));
+  if(kin.length) L.push("", "Key cards included:", ...kin.map(([n, t]) => `* #${n} ${t}`));
+  if(kout.length) L.push("", "Key cards not included:", ...kout.map(([n, t]) => `* #${n} ${t}`));
+  if(missing.length && missing.length <= 400){ const ml = missing.filter(n => !inHigh(n)), mh = missing.filter(inHigh); L.push("", "Missing:"); if(ml.length) L.push((h.high ? "Low numbers: " : "") + ml.join(", ")); if(mh.length) L.push("High numbers: " + mh.join(", ")); }
+  if(h.skip) L.push("", `${h.skip.length} numbers were never issued (${h.skip.join(", ")}) and are not counted.`);
+  return L.join("\n");
+}
+async function learnPost(){
+  const text = String(ui.knowPost || "").trim().slice(0, 30000); if(!text){ ui.knowMsg = "Paste a post first."; return render(); }
+  if(!cap.ai){ ui.knowMsg = aiOff(); return render(); }
+  ui.busy = "Reading the post"; render();
+  try{
+    const known = factsFor("plan").slice(0, 4000), r = (await ai("learnpost", {text, known})) || {};
+    ui.learned = {facts:(Array.isArray(r.facts) ? r.facts : []).filter(f => f && f.text).slice(0, 20).map(f => ({year:f.year ? String(f.year) : "", set:String(f.set || ""), num:f.num ? String(f.num) : "", text:String(f.text), keep:true})), style:String(r.style || "")};
+    ui.knowMsg = ui.learned.facts.length || ui.learned.style ? "" : "Nothing new to learn from that post.";
+  }catch(e){ ui.knowMsg = "That did not work: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+function knowPanel(){
+  const q = hnorm(ui.knowQ), inSaleSets = [...new Set(S.cards.flatMap(c => c.isLot ? c.members : [c]).map(m => (hobbySet(m) || {}).k).filter(Boolean))];
+  const shown = q ? Object.keys(HOBBY).filter(k => hnorm(k).includes(q) || q.includes(k.slice(0, 4))).slice(0, 4) : inSaleSets.slice(0, 4);
+  const setHtml = k => { const h = HOBBY[k], notes = (S.hobbyNotes || []).map((x, i) => [x, i]).filter(([x]) => String(x.year) === k.slice(0, 4) && (!x.set || hnorm(k.slice(5)).startsWith(hnorm(x.set))));
+    return `<div class="knowset"><h3>${esc(k)}</h3><p class="meta">${h.size} cards${h.skip ? ` (numbered to ${h.top}; ${h.skip.join(", ")} never issued)` : ""}.${h.high ? ` ${h.highName || "High numbers"} #${h.high[0]}-${h.high[1]}, ${h.high[2] === "strong" ? "scarce, strong premium" : "mild premium"}.` : " No high-number premium."}${h.semi ? ` Semi-highs #${h.semi[0]}-${h.semi[1]}.` : ""} ${esc(h.note || "")}</p>
+      ${h.keys ? `<p class="meta"><strong>Key cards:</strong> ${esc(Object.entries(h.keys).map(([n, t]) => "#" + n + " " + t).join("; "))}</p>` : ""}
+      ${h.vars || h.range ? `<p class="meta"><strong>Errors and variations:</strong> ${esc([...Object.entries(h.vars || {}).map(([n, t]) => "#" + n + " " + t), ...(h.range || []).map(r => r[2])].join("; "))}</p>` : ""}
+      ${notes.length ? `<ul class="chg meta">${notes.map(([x, i]) => `<li>${x.num ? "#" + esc(x.num) + ": " : ""}${esc(x.text)} <button class="small" data-act="knowDel" data-i="${i}">Remove</button></li>`).join("")}</ul>` : ""}</div>`; };
+  const L = ui.learned;
+  return `<div class="panel" id="know"><h2>Hobby know-how</h2>
+    <p class="note">What the tool knows about vintage sets: set sizes, high-number series, key rookies and stars, errors and variations. It flags these on your cards and lots, and uses them when it reads photos, builds lots, checks prices and writes posts. Add your own notes, or paste a post you like and it learns new facts and the post's layout.</p>
+    <label>Look up a year or set<input id="knowq" value="${esc(ui.knowQ || "")}" placeholder="1972 Topps"></label>
+    ${shown.length ? shown.map(setHtml).join("") : `<p class="note">${q ? "Nothing on that yet. Add a note below and the tool will use it." : "Type a year, like 1968, to see what the tool knows."}</p>`}
+    <details class="more" data-dk="knowadd" ${ui.dopen.knowadd ? "open" : ""}><summary>Add a note of your own</summary>
+      <div class="row"><input id="knowy" placeholder="Year" style="width:70px" inputmode="numeric" value="${esc(ui.knowY || "")}"><input id="knows" placeholder="Set, like Topps" style="width:120px" value="${esc(ui.knowS || "")}"><input id="known" placeholder="Card # (optional)" style="width:130px" value="${esc(ui.knowN || "")}"></div>
+      <input id="knowt" placeholder="What to remember, like: #600 Mays is a semi-high and goes for more" value="${esc(ui.knowT || "")}"><div class="row"><button class="small primary" data-act="knowAdd">Save the note</button></div></details>
+    <details class="more" data-dk="knowlearn" ${ui.dopen.knowlearn || L ? "open" : ""}><summary>Learn from a post</summary>
+      <p class="note">Paste a sale post, yours or another seller's. The tool pulls out hobby facts for you to keep and describes the layout so your posts can follow it. Prices from the post are not kept here; use Sub sales above for that.</p>
+      <textarea id="knowpost" placeholder="Paste the post here" style="min-height:120px">${esc(ui.knowPost || "")}</textarea>
+      <div class="row"><button class="small primary" data-act="knowLearn" ${ui.busy ? "disabled" : ""}>Learn from this post</button><span class="${ui.busy === "Reading the post" ? "progress busy" : "note"}">${esc(ui.busy === "Reading the post" ? ui.busy : ui.knowMsg || "")}</span></div>
+      ${L ? `${L.facts.length ? `<div class="clearlist">${L.facts.map((f, i) => `<label class="inline"><input type="checkbox" data-lk="${i}" ${f.keep ? "checked" : ""}> ${esc([f.year, f.set, f.num ? "#" + f.num : ""].filter(Boolean).join(" "))}${f.year ? ": " : ""}${esc(f.text)}</label>`).join("")}</div><div class="row"><button class="small primary" data-act="knowKeep">Keep the ticked facts</button></div>` : ""}
+        ${L.style ? `<p class="meta"><strong>Layout of this post:</strong> ${esc(L.style)}</p><div class="row"><button class="small primary" data-act="knowStyle">Write my posts like this</button><button class="small" data-act="knowStyleAdd">Add it to my style</button><button class="small" data-act="knowDone">Done</button></div>` : `<div class="row"><button class="small" data-act="knowDone">Done</button></div>`}` : ""}</details>
+    <details class="more" data-dk="knowstyle" ${ui.dopen.knowstyle ? "open" : ""}><summary>Your post style</summary>
+      <p class="note">Used when the tool writes your title and opening. Edit it freely.</p>
+      <textarea id="set-styleNotes" placeholder="For example: open with one summary line, then a bullet per section naming the headliners. Each lot gets a header with its card count and price.">${esc(S.settings.styleNotes || "")}</textarea></details>
+    <details class="more" data-dk="knowcheck" ${ui.dopen.knowcheck ? "open" : ""}><summary>Check a partial set</summary>
+      <p class="note">Pick the set and paste the numbers you are missing (or the ones you have). Ranges like 49-52 work. You get the counts by series and which key cards are in or out, ready to paste into a post.</p>
+      <div class="row"><select id="knowset">${Object.keys(HOBBY).map(k => `<option ${ui.knowSet === k ? "selected" : ""}>${k}</option>`).join("")}</select><label class="inline"><input type="radio" name="knowmode" id="knowmode-miss" ${ui.knowMode !== "have" ? "checked" : ""}> Numbers I am missing</label><label class="inline"><input type="radio" name="knowmode" id="knowmode-have" ${ui.knowMode === "have" ? "checked" : ""}> Numbers I have</label></div>
+      <textarea id="knowmiss" placeholder="49, 50, 79, 256, 661-663" style="min-height:80px">${esc(ui.knowMiss || "")}</textarea>
+      <div class="row"><button class="small primary" data-act="knowCheck">Check it</button>${ui.knowOut ? `<button class="small" data-act="knowCopy">Copy</button>` : ""}</div>
+      ${ui.knowOut ? `<textarea readonly style="min-height:240px">${esc(ui.knowOut)}</textarea>` : ""}</details>
+  </div>`;
+}
+
+/* ---------- the year-lot layout: one header per lot with its count and price, prices on one line ---------- */
+function lotCond(c){
+  const n = c.members.length, grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
+  return (grades.length ? (grades.length <= 3 ? grades.join(" to ") : "Mixed condition") + ". " : "") + (hits.length
+    ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"}: ${hits.slice(0, 5).map(m => (m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
+    : "No creases, writing or paper loss that I can see.");
+}
+function priceCommentLines(){
+  const st = S.settings, items = ordered().filter(inSale), low = s => s.replace(/^./, ch => ch.toLowerCase());
+  const strike = (t, c) => c.status === "sold" ? "~~" + t + "~~ SOLD" : c.status === "claimed" ? t + " (pending)" : t;
+  const yy = y => y ? " '" + String(y).slice(-2) : "";
+  const extra = m => { const hs = hobbyShort(m), iss = issuesOf(m)[0], g = String(m.grade || "").replace(/^raw\s+/i, ""), lowG = /^(PR|FR|P|Poor|Fair|GD|Good)\b/i.test(g) ? g : ""; return (hs ? " " + hs.replace("high number", "high #") : "") + (iss || lowG ? " (" + [lowG, iss ? low(iss) : ""].filter(Boolean).join(", ") + ")" : ""); };
+  const all = items.flatMap(c => c.isLot ? c.members : [c]), years = all.map(m => +m.year).filter(Boolean), take = numOrNull(st.takeAll);
+  let out = `${plural(all.length, "card", "cards")}${years.length ? ", " + Math.min(...years) + (Math.max(...years) > Math.min(...years) ? " to " + Math.max(...years) : "") : ""}${items.some(c => c.isLot) && items.some(c => !c.isLot) ? ", priced by card with lot prices on the groups" : items.some(c => c.isLot) ? ", sold as lots" : ""}.\n\n`;
+  if(take > 0) out += `**TAKE EVERYTHING: ${money(take)} shipped**\n\n`;
+  for(const s of [...new Set(items.map(c => c.section || "Other cards"))]){
+    const list = items.filter(c => (c.section || "Other cards") === s), singles = list.filter(c => !c.isLot);
+    if(singles.length) out += `**${s}**\n\n` + singles.map(c => strike(`${c.year ? c.year + " " : ""}${c.player || lineName(c)}${extra(c)} ${c.tagText || money(priceOf(c)) || "price to come"}`, c)).join(" · ") + "\n\n";
+    for(const c of list.filter(x => x.isLot)){
+      const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, ""), lh = lotHobby(c), same = c.members.every(m => String(m.year) === String(c.members[0].year));
+      out += strike(`**${name} | ${n} cards | ${c.tagText || money(priceOf(c)) || "price to come"}${c.splitOk ? "" : " (lot only)"}**`, c) + "\n\n";
+      out += lotCond(c) + (lh.highs ? ` Includes ${plural(lh.highs, "high number", "high numbers")}.` : "") + "\n\n";
+      if(lh.keys.length || lh.stars.length) out += "Key cards: " + [...lh.keys.map(x => x.label), ...lh.stars].slice(0, 12).join(", ") + "\n\n";
+      if(c.splitOk) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}${extra(m)} ${money(priceOf(m)) || ""}`.trim()).join(" · ") + "\n\n";
+      else if(n <= 15) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}`).join(", ") + "\n\n";
+    }
+  }
+  out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted above and already priced in. Ask for more photos of anything before you claim.\n`;
+  return out.replace(/\n{3,}/g, "\n\n");
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2304,6 +2514,15 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "knowLearn") return learnPost();
+  else if(act === "knowKeep" && ui.learned){ const keep = ui.learned.facts.filter(f => f.keep); S.hobbyNotes = [...(S.hobbyNotes || []), ...keep.map(f => ({id:uid(), year:f.year, set:f.set, num:f.num, text:f.text}))]; ui.learned.facts = []; ui.knowMsg = `Kept ${plural(keep.length, "fact", "facts")}. They show on matching cards and go with every pricing and writing task.`; if(!ui.learned.style) ui.learned = null; }
+  else if(act === "knowStyle" && ui.learned){ S.settings.styleNotes = ui.learned.style; ui.learned = null; ui.knowMsg = "Your posts will follow this layout. Edit it under Your post style."; }
+  else if(act === "knowStyleAdd" && ui.learned){ S.settings.styleNotes = [S.settings.styleNotes, ui.learned.style].filter(Boolean).join("\n"); ui.learned = null; ui.knowMsg = "Added to your post style."; }
+  else if(act === "knowDone"){ ui.learned = null; ui.knowPost = ""; }
+  else if(act === "knowAdd"){ const t = String(ui.knowT || "").trim(); if(t){ S.hobbyNotes = [...(S.hobbyNotes || []), {id:uid(), year:String(ui.knowY || "").trim(), set:String(ui.knowS || "").trim(), num:String(ui.knowN || "").replace(/[^0-9]/g, ""), text:t}]; ui.knowT = ui.knowN = ""; ui.knowQ = ui.knowQ || String(ui.knowY || ""); } }
+  else if(act === "knowDel"){ S.hobbyNotes = (S.hobbyNotes || []).filter((x, i) => i !== +el.dataset.i); }
+  else if(act === "knowCheck"){ ui.knowSet = ui.knowSet || Object.keys(HOBBY)[0]; ui.knowOut = setCheck(); }
+  else if(act === "knowCopy"){ try{ navigator.clipboard.writeText(ui.knowOut || ""); ui.knowMsg = "Copied."; }catch(e){} return; }
   else if(act === "pauto") return ui.photo && ui.photo.page ? runQueue(pagePhotos(ui.photo), "Pricing " + ui.photo.page.name) : autoPrice();
   else if(act === "pQueue") return runQueue((ui.photos || []).filter(x => !x.cards), "Pricing photos");
   else if(act === "pPickMode"){ ui.pickPhotos = !ui.pickPhotos; ui.picked = []; }
@@ -2414,6 +2633,11 @@ document.addEventListener("change", e => {
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
+  if(t.dataset.split){ const c = S.cards.find(x => x.id === t.dataset.split); if(c){ c.splitOk = t.checked; save(); } return render(); }
+  if(t.dataset.lk && ui.learned){ const f = ui.learned.facts[+t.dataset.lk]; if(f) f.keep = t.checked; return; }
+  if(t.id === "knowset"){ ui.knowSet = t.value; return; }
+  if(t.id === "knowmode-miss" || t.id === "knowmode-have"){ ui.knowMode = t.id.slice(9); return; }
+  if(t.id === "knowq"){ ui.knowQ = t.value; return render(); }
   if(t.dataset.plink && ui.photo){ const pc = pcard(t.dataset.plink); if(pc){ pc.invId = t.value || null; pc.matched = !!t.value; pc.price = null; pc.text = ""; ui.photo.askAdd = ui.photo.askAdd && photoExtra(ui.photo).length > 0; relabel(); ui.photo.msg = t.value ? "Linked to your Review card. The tag now uses that ask." : "Unlinked from Review."; save(); } return render(); }
   if(t.dataset.pref && ui.photo){ const v = Number(String(t.value).replace(/[^0-9.]/g, "")); ui.photo.msg = photoPrice([t.dataset.pref], v); relabel(); save(); return render(); }
   if(t.id === "pselmode"){ ui.photoSelect = t.checked; if(!t.checked && ui.photo) ui.photo.selRefs = []; return render(); }
@@ -2452,7 +2676,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);

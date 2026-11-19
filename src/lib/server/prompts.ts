@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -236,7 +236,7 @@ ${JSON.stringify(sale)}
 ${plan ? "The seller's plan, in their words: " + plan : ""}
 
 - "titles": three different options, each under 120 characters, starting with "[FS]". Name the two or three strongest cards and the shape of the sale (singles, lots, price pages). Plain words, no hype, no emoji.
-- "intro": two or three plain sentences in the seller's own voice, first person singular ("I") on what is in the sale and how it is organized. Do not repeat payment or shipping terms. Asks are firm; never mention offers.
+- "intro": the opening of the post in the seller's own voice, first person singular ("I"). One summary line on what is in the sale and how it is priced; then, when the sale has several sections or lots, up to six short highlight lines starting with "* ", one per section, naming the headline cards (rookies, high numbers, stars) and any condition exceptions. Use the reference notes to tell which cards are keys. Do not repeat payment or shipping terms. Asks are firm; never mention offers.
 
 Return JSON only: {"titles":["[FS] ...","[FS] ...","[FS] ..."],"intro":"..."}`;
 }
@@ -261,6 +261,35 @@ Match each line of the list to the card or lot it prices. Lists are informal: "6
 - Asks are firm on this subreddit; take the seller's numbers as written.
 
 Return JSON only: {"prices":[{"id":"p3","price":40,"line":"Gibson $40"}],"groups":[{"ids":["p10","p11","p12"],"price":35,"line":"Teds lot 35"}],"unmatched":["..."],"say":"one plain sentence"}`;
+}
+
+export function learnPostPrompt(text: string, known: string): string {
+  return `A vintage baseball card seller pasted a sale post from r/baseballcards_vintage, their own or another seller's, so their tool can learn from it.
+
+The post:
+"""${text}"""
+
+What the tool already knows (do not repeat it):
+${known}
+
+1. "facts": hobby knowledge the post states or clearly supports that a seller would want remembered for pricing, building lots or describing cards. For example: scarce high-number or semi-high series, short prints, key rookies or stars in a set, errors and variations, subsets, condition traits of a set (black borders that chip, wood-grain borders). Each is {"year":1972,"set":"Topps","num":null,"text":"One plain sentence."}; give "num" only for a single card. Leave out prices of single sales, opinions, and anything you are not sure is accurate.
+2. "style": the layout of the post in three to six short plain sentences the tool can follow when writing posts: the opening, how sections and lots are headed, how card counts, condition and key cards are given, how per-card prices and lot prices are written, any take-everything price. Describe the pattern; do not copy the seller's sentences or cards. Asks are firm for this seller, so leave out offers, OBO and claims-before-offers language.
+
+Return JSON only: {"facts":[...],"style":"..."}`;
+}
+
+const REF_TASKS = new Set(["scan", "locate", "plan", "pricecheck", "postcopy", "edit"]);
+
+/** Reference notes from the tool's hobby reference and the seller's own notes, plus the seller's post style for writing. */
+export function withReference(task: string, prompt: string, payload: Record<string, unknown>): string {
+  if (!REF_TASKS.has(task)) return prompt;
+  const facts = String(payload.facts ?? "").slice(0, 8000).trim();
+  const style = task === "postcopy" ? String(payload.style ?? "").slice(0, 3000).trim() : "";
+  return (
+    prompt +
+    (facts ? `\n\nReference notes from the seller's tool, a vetted hobby reference plus the seller's own notes. Trust them over memory where they apply, and still answer with only the JSON asked for above:\n${facts}` : "") +
+    (style ? `\n\nThe seller wants posts written in this style. Follow its structure, but asks stay firm and offers are never mentioned:\n${style}` : "")
+  );
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.
