@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost" | "backnums";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -292,6 +292,18 @@ export function withReference(task: string, prompt: string, payload: Record<stri
     (facts ? `\n\nReference notes from the seller's tool, a vetted hobby reference plus the seller's own notes. Trust them over memory where they apply, and still answer with only the JSON asked for above:\n${facts}` : "") +
     (style ? `\n\nThe seller wants posts written in this style. Follow its structure, but asks stay firm and offers are never mentioned:\n${style}` : "")
   );
+}
+
+export function backNumsPrompt(year: string, set: string, size: number): string {
+  return `These photos show the backs of vintage baseball cards laid out so the card numbers show. The seller says they are ${year} ${set}${size ? `, a set numbered 1 to ${size}` : ""}.
+
+Read the card number on every card back you can see.
+- Each physical card is one entry, so a duplicate appears twice.
+- If a number is not legible, give "num": null for that card. Never guess a number and never add cards that are not in the photo.
+- If a card is clearly from a different year or set, still list it, with "other": true.
+- Give the player's name when it is printed and legible; otherwise leave it out.
+
+Return JSON only: {"cards":[{"num":123,"name":"Hank Aaron","other":false}],"seen":45}`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.

@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { backNumsPrompt, backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost", "backnums"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -30,12 +30,13 @@ export async function POST(req: Request) {
   const images = form.getAll("images").filter((f): f is File => f instanceof File);
   if (images.length > MAX_IMAGES) return fail(400, `At most ${MAX_IMAGES} images per request.`);
   if (images.some((f) => f.size > MAX_IMAGE_BYTES || f.type !== "image/jpeg")) return fail(400, "Images must be JPEG and under 2 MB each.");
-  if ((task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate") && images.length === 0) return fail(400, "No images were sent.");
+  if ((task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate" || task === "backnums") && images.length === 0) return fail(400, "No images were sent.");
 
   let prompt: string;
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
+  else if (task === "backnums") prompt = backNumsPrompt(String(payload.year ?? "").slice(0, 4), String(payload.set ?? "").slice(0, 40), Math.max(0, Math.min(1000, Number(payload.size) || 0)));
   else if (task === "locate") prompt = locatePrompt(Array.isArray(payload.inv) ? payload.inv.slice(0, 600) : []);
   else if (task === "pricecheck") {
     const items = Array.isArray(payload.items) ? payload.items : [];
@@ -112,7 +113,7 @@ export async function POST(req: Request) {
         max_tokens: 16000,
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
-        output_config: { effort: task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate" ? "high" : "medium" },
+        output_config: { effort: task === "scan" || task === "grade" || task === "back" || task === "recheck" || task === "locate" || task === "backnums" ? "high" : "medium" },
         ...(tools ? { tools } : {}),
         messages,
       });

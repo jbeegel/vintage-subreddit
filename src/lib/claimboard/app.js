@@ -1483,6 +1483,7 @@ function rowSale(c){
     ${rqBox(c)}
     ${whyBox(c)}
     ${c.isLot && c.status === "open" ? countBox(c) : ""}
+    ${c.isLot && c.status === "open" ? `<div class="countbox">${invBox(c)}</div>` : ""}
     ${c.isLot && c.status === "open" ? `<label class="inline"><input type="checkbox" data-split="${c.id}" ${c.splitOk ? "checked" : ""}> Cards in this lot can also be bought one at a time</label>` : ""}
     ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
   </li>`;
@@ -1857,7 +1858,7 @@ function commentPanel(){
     <textarea id="out-comment" readonly style="min-height:320px">${esc(priceComment())}</textarea>
     <div class="row"><button class="primary" data-copy="out-comment">Copy price comment</button></div></div>`;
 }
-const vPostAll = () => vPost().replace(/<\/section>\s*$/, commentPanel() + "</section>");
+const vPostAll = () => vPost().replace(/<\/section>\s*$/, commentPanel() + numberPanel() + "</section>");
 
 /* ---------- double-check prices: every ask against web comps, the seller's history and collected sub prices ---------- */
 function checkItems(only){
@@ -2502,6 +2503,124 @@ function byYear(list){
   return keys.sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b)).map(k => [k || "Mixed years", list.filter(c => yearOf(c) === k)]);
 }
 
+/* ---------- card-number inventory: photos of the backs give the exact numbers in a year lot ---------- */
+function invInfo(lot){
+  const inv = lot.inv; if(!inv) return null;
+  const h = HOBBY[inv.label] || null, list = inv.list || [], qty = new Map();
+  list.forEach(n => qty.set(n, (qty.get(n) || 0) + 1));
+  const nums = [...qty.keys()].sort((a, b) => a - b), top = h ? h.top || h.size : 0, skip = new Set(h && h.skip || []);
+  const inHigh = n => h && h.high && n >= h.high[0] && n <= h.high[1];
+  const keys = h ? Object.entries(h.keys || {}).map(([n, t]) => [+n, t]) : [];
+  const missing = []; if(top) for(let i = 1; i <= top; i++) if(!skip.has(i) && !qty.has(i)) missing.push(i);
+  return {h, nums, qty, total:list.length + (inv.unread || 0), unique:nums.length, unread:inv.unread || 0, highs:nums.filter(inHigh).length, inHigh,
+    keysIn:keys.filter(([n]) => qty.has(n)), keysOut:keys.filter(([n]) => !qty.has(n)), dupes:nums.filter(n => qty.get(n) > 1), missing, other:inv.other || 0};
+}
+async function readBacks(lotId, files){
+  const f = findCard(lotId); if(!f || !f.c.isLot) return; const lot = f.c;
+  const label = String(lot.invLabel || (lot.inv && lot.inv.label) || yearOf(lot) || "").trim();
+  if(!/^\d{4}\s+\S/.test(label)){ ui.invMsg = "Type the year and set first, like 1972 Topps."; return render(); }
+  if(!cap.ai){ ui.invMsg = aiOff(); return render(); }
+  const year = label.slice(0, 4), set = label.slice(5), h = HOBBY[label], size = h ? h.top || h.size : 0;
+  const inv = lot.inv && lot.inv.label === label ? lot.inv : {label, list:[], unread:0, other:0, photos:0};
+  let added = 0;
+  try{
+    for(const [i, file] of files.entries()){
+      ui.busy = `Reading card numbers, photo ${i + 1} of ${files.length}`; ui.invFor = lotId; render();
+      const img = await shrink(file, 2000);
+      const r = (await ai("backnums", {year, set, size}, [img])) || {}, cards = Array.isArray(r.cards) ? r.cards : [];
+      for(const c of cards){
+        const n = Number(c && c.num);
+        if(c && c.other){ inv.other++; continue; }
+        if(n > 0 && (!size || n <= size)){ inv.list.push(Math.round(n)); added++; } else inv.unread++;
+      }
+      inv.photos++;
+    }
+    inv.at = Date.now(); lot.inv = inv;
+    const s = invInfo(lot);
+    ui.invMsg = `Read ${plural(added, "card number", "card numbers")} from ${plural(files.length, "photo", "photos")}. ${s.total} cards so far, ${s.unique} different.${s.unread ? ` ${s.unread} could not be read; fix them in the list.` : ""}${s.keysIn.length ? ` Key cards found: ${s.keysIn.map(([n, t]) => "#" + n + " " + t.replace(/\s*\(.*\)$/, "")).join(", ")}.` : ""}`;
+    save();
+  }catch(e){ ui.invMsg = "The backs could not be read: " + (e && (e.message || e.code) || "unknown error"); }
+  ui.busy = ""; render();
+}
+const keyName = t => t.replace(/\s*\(.*\)$/, "").replace(/\s+rookie\b.*$/i, "").replace(/,.*$/, "").replace(/^(.*?) and .*$/, "$1").trim();
+function invAddKeys(lot){
+  const s = invInfo(lot); if(!s) return "";
+  const [year, ...rest] = lot.inv.label.split(" "), set = rest.join(" "), have = new Set(lot.members.filter(m => String(m.year) === year).map(cardNo));
+  const add = s.keysIn.filter(([n]) => !have.has(n));
+  add.forEach(([n, t]) => lot.members.push({id:uid(), status:"open", year:+year, set, num:String(n), player:keyName(t), variation:"", grade:"", flaws:"", conf:1, comp:null, price:null, where:"from the card-number inventory", pin:"lot", section:lot.section}));
+  if(add.length){ describeLot(lot); relot(lot); }
+  return add.length ? `Listed ${plural(add.length, "key card", "key cards")} in the lot. They have no price yet: add their condition and value, or run Double-check prices. Also consider whether any should be a single.` : "The key cards are already listed.";
+}
+function invBox(lot){
+  const s = invInfo(lot), id = lot.id, label = lot.invLabel || (lot.inv && lot.inv.label) || yearOf(lot) || "", open = ui.dopen["inv-" + id] ?? !!lot.inv;
+  return `<details class="more" data-dk="inv-${id}" ${open ? "open" : ""}><summary>Card-number inventory${s ? `: ${s.total} cards, ${s.unique} different` : " (optional)"}</summary>
+    <p class="note">Lay the lot out backs up so the numbers show and photograph it in as many shots as you need. The tool reads every number and gives you the exact list, any key cards or high numbers you may have missed, the count for the lot, and a second comment buyers can search.</p>
+    <div class="row"><label class="inline">Year and set <input data-invlabel="${id}" value="${esc(label)}" placeholder="1972 Topps" style="width:130px"></label><input type="file" id="invfile-${id}" data-invfile="${id}" accept="image/*" multiple hidden><button class="small primary" data-act="invPick" data-lid="${id}" ${ui.busy ? "disabled" : ""}>${s ? "Add more photos of the backs" : "Photos of the backs"}</button></div>
+    ${ui.invFor === id && (ui.busy || ui.invMsg) ? `<p class="${ui.busy ? "progress busy" : "note"}">${esc(ui.busy || ui.invMsg)}</p>` : ""}
+    ${s ? `<p><strong>${s.total} cards, ${s.unique} different</strong>${s.h ? ` of the ${s.h.size} in the set` : ""}${s.highs ? ` · ${plural(s.highs, "high number", "high numbers")}` : ""}${s.dupes.length ? ` · ${plural(s.dupes.length, "number doubled", "numbers doubled")}` : ""}${s.unread ? ` · <span class="chip warn">${s.unread} unread</span>` : ""}${s.other ? ` · ${s.other} from another set` : ""}</p>
+      ${s.keysIn.length ? `<div class="check ok"><span><strong>Key cards in this lot:</strong> ${esc(s.keysIn.map(([n, t]) => "#" + n + " " + t).join("; "))}</span><div class="row"><button class="small primary" data-act="invAddKeys" data-lid="${id}">List them in the lot</button></div></div>` : ""}
+      <label>Numbers read, one per card, doubles repeated. Fix any mistakes here.<textarea data-invnums="${id}" style="min-height:90px">${esc((lot.inv.list || []).slice().sort((a, b) => a - b).join(", "))}</textarea></label>
+      <div class="row"><button class="small primary" data-act="invUseCount" data-lid="${id}">Use ${s.total} cards, ${s.unique} different as the lot count</button><button class="small danger" data-act="invClear" data-lid="${id}">Clear the inventory</button></div>` : ""}
+  </details>`;
+}
+function numberComment(){
+  const lots = ordered().filter(inSale).filter(c => c.isLot && c.inv && (c.inv.list || []).length);
+  if(!lots.length) return "";
+  let out = "**Card numbers in each lot.** Search this comment for the numbers you need, with the # in front, like #432.\n\n";
+  for(const c of lots){
+    const s = invInfo(c), name = c.player.replace(/\s*\(\d+ cards?\)$/, ""), fmt = ns => ns.map(n => "#" + n + (s.qty.get(n) > 1 ? " (x" + s.qty.get(n) + ")" : "")).join(", ");
+    out += `**${name}**${c.status === "sold" ? " SOLD" : ""}: ${s.total} cards, ${s.unique} different${s.h ? ` of ${s.h.size}` : ""}${c.splitOk ? "" : ", lot only"}\n\n`;
+    if(s.h && s.h.high){ const lo = s.nums.filter(n => !s.inHigh(n)), hi = s.nums.filter(s.inHigh); if(lo.length) out += `Low numbers: ${fmt(lo)}\n\n`; if(hi.length) out += `High numbers (#${s.h.high[0]}-${s.h.high[1]}): ${fmt(hi)}\n\n`; }
+    else out += fmt(s.nums) + "\n\n";
+    if(s.keysIn.length) out += `Key cards: ${s.keysIn.map(([n, t]) => "#" + n + " " + keyName(t)).join(", ")}\n\n`;
+    if(S.settings.invMissing && s.missing.length && s.missing.length <= 500) out += `Not in this lot: ${s.missing.map(n => "#" + n).join(", ")}\n\n`;
+  }
+  return out.replace(/\n{3,}/g, "\n\n");
+}
+/* a buyer's want list: "1972: 12, 45, 600-610" against every inventoried lot and every numbered card in the sale */
+function checkWants(text){
+  const items = ordered().filter(inSale).filter(c => c.status !== "sold"), wants = [];
+  let ctx = null;
+  for(const line of String(text || "").split(/\n|;/)){
+    const m = /\b(19[3-8]\d)\b\s*([A-Za-z][A-Za-z' ]{1,20})?/.exec(line);
+    let rest = line;
+    if(m){ ctx = {year:m[1], set:(m[2] || "").trim().split(/\s*[:,-]/)[0].trim()}; rest = line.slice(m.index + m[0].length); }
+    if(!ctx) continue;
+    const ns = [...parseNums(rest.replace(/#/g, ""))].filter(n => n < 1000);
+    if(ns.length) wants.push({year:ctx.year, set:ctx.set, nums:ns});
+  }
+  if(!wants.length) return {text:"I could not find a year and card numbers in that list. A line like \"1972 Topps: 12, 45, 600-610\" works.", hits:0};
+  const out = []; let hits = 0;
+  for(const w of wants){
+    const setOk = s => !w.set || hnorm(s).startsWith(hnorm(w.set)) || hnorm(w.set).startsWith(hnorm(s));
+    const found = new Map();
+    for(const c of items){
+      if(c.isLot && c.inv && c.inv.label.slice(0, 4) === w.year && setOk(c.inv.label.slice(5))){ const s = invInfo(c); w.nums.filter(n => s.qty.has(n)).forEach(n => found.set(n, c)); }
+      for(const m of c.isLot ? c.members : [c]) if(String(m.year) === w.year && setOk(m.set) && w.nums.includes(cardNo(m)) && !found.has(cardNo(m))) found.set(cardNo(m), c);
+    }
+    hits += found.size;
+    const where = new Map(); [...found].forEach(([n, c]) => { if(!where.has(c)) where.set(c, []); where.get(c).push(n); });
+    out.push(`${w.year}${w.set ? " " + w.set : ""}: you need ${plural(w.nums.length, "card", "cards")}, and I have ${found.size}.` + [...where].map(([c, ns]) => ` In ${c.isLot ? "the " + c.player.replace(/\s*\(\d+ cards?\)$/, "") + (c.splitOk ? "" : ", sold as a whole lot") : "the singles"} at ${c.tagText || money(priceOf(c)) || "a price to come"}: ${ns.sort((a, b) => a - b).map(n => "#" + n).join(", ")}.`).join("") + (found.size < w.nums.length ? ` Not in this sale: ${w.nums.filter(n => !found.has(n)).slice(0, 80).map(n => "#" + n).join(", ")}.` : ""));
+  }
+  return {text:out.join("\n\n"), hits};
+}
+function numberPanel(){
+  const t = numberComment(), lots = S.cards.filter(c => c.isLot && inSale(c));
+  if(!lots.length) return "";
+  const W = ui.wantOut;
+  return `<div class="panel" id="numbercomment"><h2>Card-number comment</h2>
+    ${t ? `<p class="note">A second comment with every card number in each inventoried lot, so set builders can search it for what they need.</p>
+      <label class="inline"><input type="checkbox" id="set-invMissing" ${S.settings.invMissing ? "checked" : ""}> Also list the numbers each lot is missing</label>
+      <textarea id="out-numbers" readonly style="min-height:200px">${esc(t)}</textarea><div class="row"><button class="primary" data-copy="out-numbers">Copy card-number comment</button></div>`
+      : `<p class="note">Optional. On the Sale tab, open Card-number inventory on a lot and add photos of the backs. The exact list of numbers then appears here as a second comment.</p>`}
+    <h3>Check a buyer's want list</h3>
+    <p class="note">Paste a buyer's list, or open a text or CSV file of it, to see which of their cards are in this sale and get a reply to send. Lines like "1972 Topps: 12, 45, 600-610" work.</p>
+    <textarea id="wanttext" placeholder="1972 Topps: 12, 45, 600-610&#10;1966: 5, 88">${esc(ui.wantText || "")}</textarea>
+    <div class="row"><button class="small primary" data-act="wantGo">Check it</button><input type="file" id="wantfile" accept=".txt,.csv,text/plain,text/csv" hidden><button class="small" data-act="wantPick">Open a text file</button></div>
+    ${W ? `<textarea id="out-wants" readonly style="min-height:120px">${esc(W)}</textarea><div class="row"><button class="small" data-copy="out-wants">Copy reply</button></div>` : ""}
+  </div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -2589,6 +2708,12 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "invPick"){ const i = $("#invfile-" + el.dataset.lid); if(i) i.click(); return; }
+  else if(act === "invAddKeys"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot){ ui.invMsg = invAddKeys(f.c); ui.invFor = f.c.id; } }
+  else if(act === "invUseCount"){ const f = findCard(el.dataset.lid), s = f && invInfo(f.c); if(s){ setLotCount(f.c, s.total, s.unique); ui.invMsg = `The lot now counts ${s.total} cards, ${s.unique} different.`; ui.invFor = f.c.id; } }
+  else if(act === "invClear"){ const f = findCard(el.dataset.lid); if(f){ f.c.inv = null; ui.invMsg = ""; } }
+  else if(act === "wantGo"){ ui.wantOut = checkWants(ui.wantText).text; }
+  else if(act === "wantPick") return $("#wantfile").click();
   else if(act === "pYears" && ui.photo) makeYearLots();
   else if(act === "countJust"){ const f = findCard(el.dataset.lid); if(f && f.c.isLot){ f.c.count = f.c.members.length; f.c.countSet = true; relot(f.c); } }
   else if(act === "knowLearn") return learnPost();
@@ -2710,6 +2835,11 @@ document.addEventListener("change", e => {
   if(t.dataset.rq){ const q = ui.rq[t.dataset.rq]; if(q) q.note = t.value; return; }
   if(t.id === "onlycheck"){ ui.onlyCheck = t.checked; return render(); }
   if(t.dataset.clr){ (ui.clearPick = ui.clearPick || {})[t.dataset.clr] = t.checked; ui.clearConfirm = false; return render(); }
+  if(t.dataset.invfile){ const fs = [...t.files]; t.value = ""; if(fs.length) readBacks(t.dataset.invfile, fs); return; }
+  if(t.dataset.invlabel){ const f = findCard(t.dataset.invlabel); if(f){ f.c.invLabel = t.value.trim(); save(); } return; }
+  if(t.dataset.invnums){ const f = findCard(t.dataset.invnums); if(f && f.c.inv){ const out = []; for(const m of String(t.value).matchAll(/\d+/g)) out.push(+m[0]); f.c.inv.list = out.filter(n => n > 0); f.c.inv.unread = 0; save(); } return render(); }
+  if(t.id === "wanttext"){ ui.wantText = t.value; return; }
+  if(t.id === "wantfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.wantText = x.slice(0, 20000); ui.wantOut = checkWants(ui.wantText).text; render(); }); return; }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
@@ -2757,7 +2887,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);
