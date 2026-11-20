@@ -1362,6 +1362,7 @@ async function loadPhoto(file, quiet){
     const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", .9));
     ui.photo = {id:uid(), at:Date.now(), blob, bmp:await createImageBitmap(blob), w, h, scale:Number(S.settings.tagScale) || 1, color:S.settings.tagColor || "white", tags:[], key:"", title:"", note:"", qi:0, tagText:null, out:null, msg:""};
     setPhotoTarget(""); /* no headline by default: a band across the top would cover the handwritten note */
+    ui.photo.name = file.name || ""; ui.photo.caption = capAuto(ui.photo.name);
     ui.photo.hash = await imgHash(blob);
     const twin = (ui.photos || []).find(x => x.hash && hamming(x.hash, ui.photo.hash) <= 6);
     if(twin) ui.photo.msg = `This looks like photo ${(ui.photos || []).indexOf(twin) + 1}, which is already here. Delete this one if it is a repeat.`;
@@ -1377,9 +1378,18 @@ function fitText(g, text, x, y, maxW, px, weight){
 }
 function drawPhoto(cvArg, phArg){
   const ph = phArg || ui.photo, cv = cvArg || $("#pcanvas"); if(!ph || !cv) return;
-  cv.width = ph.w; cv.height = ph.h;
+  const capOn = !!String(ph.caption || "").trim(), cu = Math.max(ph.w, ph.h) / 100, cg = document.createElement("canvas").getContext("2d");
+  const cstamp = [S.settings.handle ? "u/" + String(S.settings.handle).replace(/^u\//, "") : "", new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})].filter(Boolean).join(" · ");
+  const cl = capOn ? [...capLines(cg, ph.caption, ph.w - 4 * cu, cu), {t:cstamp, size:2.1 * cu, weight:500, dim:true}] : [], band = capOn ? Math.round(cl.reduce((a, l) => a + l.size * 1.35, 0) + 3 * cu) : 0;
+  cv.width = ph.w; cv.height = ph.h + band;
   const g = cv.getContext("2d"), u = Math.max(ph.w, ph.h) / 100, pad = 1.6 * u;
   g.drawImage(ph.bmp, 0, 0, ph.w, ph.h); g.textBaseline = "top";
+  if(capOn){
+    g.fillStyle = "#ffffff"; g.fillRect(0, ph.h, ph.w, band); let y = ph.h + 1.5 * cu;
+    for(const l of cl){ g.font = `${l.weight} ${l.size}px Archivo, "Arial Narrow", Arial, sans-serif`; g.fillStyle = l.dim ? "#5a6b65" : "#0a120f"; g.fillText(l.t, 2 * cu, y); y += l.size * 1.35; }
+    if(!phArg) keepPhoto();
+    return;
+  }
   if(ph.title || ph.note){
     const hT = ph.title ? 4.4 * u : 0, hN = ph.note ? 2.6 * u : 0, H = pad * 2 + hT + hN + (hT && hN ? .8 * u : 0);
     g.fillStyle = "rgba(10,18,15,.84)"; g.fillRect(0, 0, ph.w, H); g.fillStyle = "#fff";
@@ -1422,7 +1432,7 @@ document.addEventListener("pointerdown", e => {
 document.addEventListener("pointermove", e => {
   const t = ui.drag, cv = $("#pcanvas"); if(!t || !cv) return;
   const r = cv.getBoundingClientRect();
-  t.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); t.y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  t.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); t.y = Math.min(1, Math.max(0, (e.clientY - r.top) / (r.width * ui.photo.h / ui.photo.w)));
   ui.photo.out = null; drawPhoto();
 });
 const endDrag = () => { if(!ui.drag) return; ui.drag = null; setTimeout(() => { ui.skipTap = false; }, 350); };
@@ -1436,7 +1446,7 @@ function photoTap(e){
   if(ph.cards && ph.cards.length && !ui.dopen.ptag) return;
   if(!text){ ph.msg = "Type what the tag should say first."; return render(); }
   const r = e.target.getBoundingClientRect();
-  ph.tags.push({x:(e.clientX - r.left) / r.width, y:(e.clientY - r.top) / r.height, text});
+  ph.tags.push({x:(e.clientX - r.left) / r.width, y:Math.min(1, (e.clientY - r.top) / (r.width * ph.h / ph.w)), text});
   if(ph.tagText == null) ph.qi++; else ph.tagText = null;
   ph.out = null; ph.msg = ""; render();
 }
@@ -1467,6 +1477,7 @@ function vPhotos(){
     <div class="row"><button class="${ph.cards ? "small" : "primary"}" data-act="pauto" ${ui.busy ? "disabled" : ""}>${ph.page ? (ph.cards ? "Price this page again" : `Price this page (${pagePhotos(ph).length} photos)`) : ph.cards ? "Price every card again" : "Price every card"}</button>${ph.page ? `<span class="chip">${esc(ph.page.name)} · photo ${pagePhotos(ph).indexOf(ph) + 1} of ${pagePhotos(ph).length}</span>` : ""}${ui.busy ? `<span class="progress busy">${esc(ui.busy)}</span>` : ""}</div>
     <canvas id="pcanvas" style="width:100%;height:auto;border-radius:6px;touch-action:manipulation" aria-label="Photo with price tags. Drag a tag to move it."></canvas>
     ${ph.applied === false && ph.cards && ph.cards.length ? `<div class="row">${applyBtn(ph)}<span class="note">Draft prices are faded. Nothing is final until you apply.</span></div>` : ""}
+    ${captionBox(ph)}
     ${photoSayBox(ph)}
     <div class="row"><button class="${ph.applied === false ? "small" : "primary"}" data-act="psave">Save labeled photo</button><button class="small" data-act="pMove" data-d="-1" ${(ui.photos || []).indexOf(ph) > 0 ? "" : "disabled"}>Move earlier</button><button class="small" data-act="pMove" data-d="1" ${(ui.photos || []).indexOf(ph) < n - 1 ? "" : "disabled"}>Move later</button><button class="small" data-act="pdel">Delete this photo</button></div>
     ${orderAskBox()}
@@ -2004,7 +2015,7 @@ function copyBox(){
 
 /* ---------- photo order: numbered strip, move earlier or later, save every photo in order ---------- */
 function photoRecord(ph){
-  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied, page:ph.page || null, hash:ph.hash || null};
+  return {id:ph.id, at:ph.at, ord:ph.ord ?? ph.at, blob:ph.blob, w:ph.w, h:ph.h, key:ph.key, title:ph.title, note:ph.note, qi:ph.qi, tags:(ph.tags || []).map(({x, y, text, s, ref}) => ({x, y, text, s, ref})), cards:ph.cards || null, groups:ph.groups || null, hidden:ph.hidden || null, scale:ph.scale || 1, color:ph.color || "white", applied:ph.applied, page:ph.page || null, hash:ph.hash || null, caption:ph.caption || "", name:ph.name || ""};
 }
 const photosWithCards = () => (ui.photos || []).filter(x => (x.cards || []).some(pc => pc.invId));
 function movePhoto(d){
@@ -2020,7 +2031,7 @@ function movePhoto(d){
 async function renderedBlob(x, plain){
   if(!x.bmp) x.bmp = await createImageBitmap(x.blob);
   const cv = document.createElement("canvas");
-  drawPhoto(cv, plain ? {...x, tags:[], title:"", note:""} : {...x, applied:true});
+  drawPhoto(cv, plain ? {...x, tags:[], title:"", note:"", caption:""} : {...x, applied:true});
   return new Promise(r => cv.toBlob(r, "image/jpeg", .92));
 }
 async function saveAllPhotos(plain){
@@ -3101,6 +3112,53 @@ function handoffPanel(){
   </div>`;
 }
 
+/* ---------- margin captions: the prices sit in a band under the photo, never on the cards ---------- */
+const capName = c => c.player.replace(/\s*\(\d+ cards?\)$/, "");
+const capLot = (c, pos) => `${capName(c)}${pos ? " (" + pos + ")" : ""} | ${lotN(c)} cards | ${lotAsk(c)}`;
+function capSection(sec){
+  const items = ordered().filter(c => inSale(c) && (c.section || "Other cards") === sec), L = [sec + ((S.secNotes || {})[sec] ? ": " + S.secNotes[sec] : "")];
+  let n = 0;
+  for(const c of items) L.push(c.isLot ? capLot(c) : `${++n}. ${c.year ? String(c.year) + " " : ""}${c.num ? "#" + c.num + " " : ""}${c.player}${c.variation && c.variation.length < 28 ? " (" + c.variation + ")" : ""} ${money(priceOf(c)) || ""}`.trim());
+  return L.join("\n");
+}
+function capOptions(){
+  const items = ordered().filter(inSale), out = [];
+  for(const s of [...new Set(items.map(c => c.section || "Other cards"))]) out.push({k:"s:" + s, label:"Section: " + s});
+  items.filter(c => c.isLot).forEach(c => out.push({k:"l:" + c.id, label:"Lot: " + c.player}));
+  return out;
+}
+function capFrom(k){
+  if(k.startsWith("s:")) return capSection(k.slice(2));
+  const f = findCard(k.slice(2)); return f ? capLot(f.c) : "";
+}
+/* a photo whose file name is in the price list captions itself */
+function capAuto(name){
+  const base = String(name || "").replace(/\.[a-z0-9]+$/i, "").replace(/\s*\(\d+\)$/, ""); if(base.length < 4) return "";
+  const lots = S.cards.filter(c => c.isLot && inSale(c) && String(c.note || "").includes(base));
+  if(lots.length) return lots.map(c => { const m = new RegExp(base + "\\.?[a-z]*,\\s*([^.;]+)", "i").exec(c.note); return capLot(c, m && !/^entire/i.test(m[1].trim()) ? m[1].trim() : ""); }).join("\n");
+  const line = ((S.plan && S.plan.photos) || []).find(x => x.includes(base)); if(!line) return "";
+  const head = line.split(":")[0].split(",")[0].trim().toLowerCase(), sec = [...new Set(S.cards.filter(inSale).map(c => c.section || ""))].find(s => s && s.toLowerCase().startsWith(head));
+  return sec ? capSection(sec) + (/back/i.test(line.split(":")[0]) ? "\nBACKS" : "") : "";
+}
+function capLines(g, text, maxW, u){
+  const out = [];
+  String(text || "").split("\n").forEach((raw, i) => {
+    const size = (i === 0 ? 3 : 2.5) * u, weight = i === 0 ? 800 : 500; g.font = `${weight} ${size}px Archivo, "Arial Narrow", Arial, sans-serif`;
+    let cur = "";
+    for(const w of raw.split(/\s+/)){ const t = cur ? cur + " " + w : w; if(cur && g.measureText(t).width > maxW){ out.push({t:cur, size, weight}); cur = w; } else cur = t; }
+    out.push({t:cur, size, weight});
+  });
+  return out;
+}
+function captionBox(ph){
+  const opts = capOptions();
+  return `<div class="say"><label for="ph-caption"><strong>Caption under the photo</strong></label>
+    <span class="note">Goes in a band added below the picture, with your username and the date. Nothing is drawn on the cards.${ph.caption ? " Price tags on the cards are off while a caption is set." : ""}</span>
+    ${opts.length ? `<select id="ph-capfrom"><option value="">Fill it from my sale…</option>${opts.map(o => `<option value="${esc(o.k)}">${esc(o.label)}</option>`).join("")}</select>` : ""}
+    <textarea id="ph-caption" style="min-height:70px;font-family:var(--body)" placeholder="1968 Topps | 20 cards | $20 shipped">${esc(ph.caption || "")}</textarea>
+    ${(ui.photos || []).length > 1 && S.cards.some(c => c.isLot && c.note) ? `<div class="row"><button class="small" data-act="capAll">Caption every photo from my price list</button></div>` : ""}</div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -3189,6 +3247,7 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "capAll"){ let n = 0; for(const x of ui.photos || []){ const c = capAuto(x.name); if(c){ x.caption = c; x.out = null; idb("put", photoRecord(x)); n++; } } if(ui.photo) ui.photo.msg = n ? `Captioned ${plural(n, "photo", "photos")} from your price list. Photos whose file names are not in the list were left alone.` : "No photo's file name matched the price list. Use Fill it from my sale on each photo."; }
   else if(act === "hoOpen"){ ui.hoOpen = true; ui.handoff = null; go(location.hash || "#inventory", () => { const t = $("#handoffpanel"); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
   else if(act === "hoClose"){ ui.hoOpen = false; ui.handoff = null; }
   else if(act === "hoAgain"){ ui.handoff = null; }
@@ -3396,6 +3455,8 @@ document.addEventListener("change", e => {
   if(t.id === "hofile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.hoText = x.slice(0, 60000); readHandoff(ui.hoText); }); return; }
   if(t.dataset.shipped){ const f = findCard(t.dataset.shipped); if(f){ f.c.shipped = t.checked; save(); } return render(); }
   if(t.dataset.secnote != null){ S.secNotes = {...(S.secNotes || {}), [t.dataset.secnote]:t.value.trim()}; save(); return render(); }
+  if(t.id === "ph-caption" && ui.photo){ ui.photo.caption = t.value; ui.photo.out = null; return render(); }
+  if(t.id === "ph-capfrom" && ui.photo){ if(t.value){ ui.photo.caption = capFrom(t.value); ui.photo.out = null; } return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
