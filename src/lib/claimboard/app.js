@@ -296,6 +296,7 @@ const DEFAULT_COND_NOTE = "Every condition issue I can see is called out in bold
 function condCell(c, callout){
   const clean = x => x.replace(/\|/g, "/");
   if(!callout) return clean([c.grade, c.flaws].filter(Boolean).join(", "));
+  if(c.isLot && (c.condNote || plainLot(c))) return clean(c.condNote || (c.highlights.length > 140 ? c.highlights.slice(0, 137) + "..." : c.highlights));
   if(c.isLot){
     const hit = c.members.filter(m => issuesOf(m).length), kinds = [...new Set(hit.flatMap(issuesOf))].slice(0, 3);
     return clean([c.grade, c.flaws].filter(Boolean).join(", ") + (hit.length ? `. **${hit.length} of ${c.members.length} have visible issues (${kinds.join(", ")})**` : ""));
@@ -314,7 +315,7 @@ function buildPost(){
   rows.forEach((c, i) => {
     if(i === 0 || (c.section || "") !== (rows[i - 1].section || "")) b += (i ? "\n" : "") + (c.section ? "**" + c.section + "**\n\n" : i ? "**Other cards**\n\n" : "") + head;
     const cond = condCell(c, callout), name = title(c).replace(/\|/g, "/");
-    const pr = c.status === "sold" ? "**SOLD**" : c.status === "claimed" ? `${money(priceOf(c))} (pending)` : money(priceOf(c));
+    const pr = c.status === "sold" ? "**SOLD**" : c.status === "claimed" ? `${money(priceOf(c))} (pending)` : money(priceOf(c)) + (c.shipped ? " shipped" : "");
     b += `| ${i + 1} | ${c.status === "sold" ? "~~" + name + "~~" : name} | ${cond} | ${pr} |${comps ? " " + (c.comp != null ? money(c.comp) + (c.compSrc && c.compSrc !== "example" ? " " + c.compSrc : "") : "") + " |" : ""}\n`;
   });
   if(comps) b += `\nPrices are about ${st.discount}% under the comp shown, since there are no platform fees here.\n`;
@@ -1507,7 +1508,7 @@ function resultBox(c){
 function rowSale(c){
   const p = priceOf(c);
   return `<li data-id="${c.id}"><div><div class="ttl">${esc(title(c))} ${c.status === "sold" ? `<span class="stamp">SOLD</span>` : c.status === "claimed" ? `<span class="chip ok">claimed${c.claimBy ? " u/" + esc(c.claimBy) : ""}</span>` : ""}</div>
-      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>${hobbyLine(c)}</div>
+      <div class="meta">${esc([c.grade, c.flaws].filter(Boolean).join(" · "))}</div>${c.isLot && (c.highlights || c.condNote) ? `<div class="meta">${esc([c.shipped ? "Price includes shipping." : "", c.highlights, c.condNote].filter(Boolean).join(" "))}</div>` : ""}${c.note ? `<div class="meta"><span class="chip warn">private</span> ${esc(c.note)}</div>` : ""}${hobbyLine(c)}</div>
     <div class="nums"><label>Ask<input class="money" data-f="price" inputmode="decimal" value="${c.price ?? ""}" placeholder="${p != null && c.price == null ? p : "$"}" ${c.status === "open" ? "" : "disabled"}></label>
       ${c.status !== "open" ? "" : c.isLot ? `<button class="small" data-act="unlot">Break apart</button>` : `<button class="small" data-act="takeOut">Take out</button>${ui.rq[c.id] ? "" : `<button class="small" data-act="backPick">More photos</button>`}`}</div>
     ${resultBox(c)}
@@ -1517,7 +1518,7 @@ function rowSale(c){
     ${c.isLot && c.status === "open" ? lotEvalBox(c) : ""}
     ${c.isLot && c.status === "open" ? `<div class="countbox">${invBox(c)}</div>` : ""}
     ${c.isLot && c.status === "open" ? `<label class="inline"><input type="checkbox" data-split="${c.id}" ${c.splitOk ? "checked" : ""}> Cards in this lot can also be bought one at a time</label>` : ""}
-    ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Rename this lot</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label></div></details>` : ""}
+    ${c.isLot && c.status === "open" ? `<details class="edit"><summary>Edit this lot: name, highlights, condition, shipping</summary><div class="fields"><label>Lot name<input data-f="player" value="${esc(c.player)}"></label><label style="flex-basis:100%">Highlights, shown in the post<input data-f="highlights" value="${esc(c.highlights || "")}"></label><label style="flex-basis:100%">Condition summary<input data-f="condNote" value="${esc(c.condNote || "")}"></label><label class="inline"><input type="checkbox" data-shipped="${c.id}" ${c.shipped ? "checked" : ""}> Price includes shipping</label></div></details>` : ""}
   </li>`;
 }
 function vSale(){
@@ -1529,11 +1530,12 @@ function vSale(){
     <p class="note">Everything you have agreed to, in the order it will appear in the post. Asks are firm: buyers claim at the price shown.</p>
     <p><strong>${plural(items.length, "item", "items")}</strong> · ${plural(cards, "card", "cards")} · <strong>${money(total) || "$0"}</strong> asking${unpriced ? ` · <button class="chipbtn warn" data-act="showUnpriced">${unpriced} without a price ›</button>` : ""}</p>
     ${unpricedBox(items)}
+    ${(S.privateNotes || []).length ? `<details class="edit"><summary>Private notes from your price list (${S.privateNotes.length}), never in the post</summary><ul class="chg meta">${S.privateNotes.map(x => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
     ${decide ? `<p class="flag">${plural(decide, "card still needs", "cards still need")} a place. <a href="#inventory">Decide ${decide === 1 ? "it" : "them"}</a></p>` : ""}
     <div class="row"><a class="btn primary" href="#post">Build the post</a><button class="small" data-act="goComment">Price comment</button>${items.length ? `<button class="small danger" data-act="clearOpen" data-k="sale">Clear the sale</button>` : ""}</div></div>
     ${priceCheckPanel()}
     ${items.length ? secs.map(s => { const list = items.filter(c => (c.section || "Other cards") === s), t = list.filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0);
-      return `<div class="panel" data-jump="${esc(s)}"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
+      return `<div class="panel" data-jump="${esc(s)}"><h2>${esc(s)} <span class="note">${list.length} · ${money(t) || "$0"}</span></h2><label>Note under this heading in the post<input data-secnote="${esc(s)}" value="${esc((S.secNotes || {})[s] || "")}" placeholder="Optional, like: $5 each or any 3 for $12"></label><ul class="cards">${list.map(rowSale).join("")}</ul></div>`; }).join("")
       : `<div class="panel"><p class="note">Nothing is in the sale yet. On the Review tab, make cards singles, put them on a price page, or accept a grouping, and they collect here.</p></div>`}
   </section>`;
 }
@@ -1561,8 +1563,8 @@ function progressBar(){
     ["groups", groups, groups, `${plural(groups, "grouping suggestion is", "grouping suggestions are")} waiting.`, {act:"goGroups", label:"See them"}],
     ["decide", decide, decide, `${plural(decide, "card still needs", "cards still need")} a place: single, price page or lot.`, {act:"goDecide", label:"Decide"}],
     ["count", S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.countSet && inSale(c)).length, "lot needs", "lots need")} a card count. Unique cards drive a year lot's price.`, {href:"#sale", label:"Add counts"}],
-    ["lotprice", S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, "lot has", "lots have")} only a quick estimate. Run a full lot analysis: count, stars, keys and recent lot sales.`, {act:"lotEvalAll", label:"Analyze my lots"}],
-    ["pricecheck", !S.postedAt && unchecked, unchecked, `Double-check ${unchecked === items.filter(c => c.status === "open").length ? "the asks" : plural(unchecked, "ask", "asks")} against recent sales before you post.`, {act:"pcGo", label:"Double-check prices"}],
+    ["lotprice", !S.finalPrices && S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, `${plural(S.cards.filter(c => c.isLot && c.status === "open" && !c.lotEval && inSale(c)).length, "lot has", "lots have")} only a quick estimate. Run a full lot analysis: count, stars, keys and recent lot sales.`, {act:"lotEvalAll", label:"Analyze my lots"}],
+    ["pricecheck", !S.finalPrices && !S.postedAt && unchecked, unchecked, `Double-check ${unchecked === items.filter(c => c.status === "open").length ? "the asks" : plural(unchecked, "ask", "asks")} against recent sales before you post.`, {act:"pcGo", label:"Double-check prices"}],
     ["photos", !S.postedAt && items.length && !labeled, items.length, "Put the asks on your sale photos so buyers see every price.", {href:"#photos", label:"Label photos"}],
     ["post", !S.postedAt, 0, "Everything has a place. Look over the sale, then build and copy the post.", {href:view === "sale" ? "#post" : "#sale", label:view === "sale" ? "Build the post" : "Open the sale"}],
     ["claims", claimed, claimed, `${plural(claimed, "claim is", "claims are")} waiting for payment.`, {href:"#claims", label:"Claims"}],
@@ -1575,7 +1577,7 @@ function progressBar(){
   const b = next[1], btn = b.href ? `<a class="btn small primary" href="${b.href}">${b.label}</a>` : `<button class="small primary" data-act="${b.act}">${b.label}</button>`;
   return `<input type="file" id="backfile" accept="image/*" multiple hidden><div class="panel prog">${goalLine()}<ol class="steps">${steps.map((s, i) => `<li class="${s.d ? "done" : i === cur ? "now" : ""}"><a href="${s.h}"><b>${s.k}</b><span>${esc(s.t)}</span></a></li>`).join("")}</ol>
     <div class="next"><span><strong>Next:</strong> ${esc(next[0])}</span><span class="row" style="gap:6px">${btn}${ui.nextKey ? `<button class="small" data-act="nextSkip">Not now</button>` : ""}<button class="small" data-act="clearOpen">Clear…</button><button class="small danger" data-act="startOver">Start over</button></span></div>
-    <div class="row" style="gap:6px"><button class="small" data-act="exportMd">Download for ChatGPT (.md)</button><button class="small" data-act="importOpen">Import prices</button></div>
+    <div class="row" style="gap:6px"><button class="small" data-act="exportMd">Download for ChatGPT (.md)</button><button class="small" data-act="importOpen">Import prices</button><button class="small" data-act="hoOpen">Import a final price list</button></div>
     ${skipped ? `<p class="note">${plural(skipped, "step is", "steps are")} set aside. <button class="small" data-act="nextBack">Bring ${skipped === 1 ? "it" : "them"} back</button></p>` : `<p class="note">Disagree? Say so in the box below, for example "skip the price check, I priced these from my own comps".</p>`}</div>`;
 }
 
@@ -1863,7 +1865,7 @@ function condShort(c){
   return [g, ...pick].filter(Boolean).join(", ");
 }
 const lineName = c => [c.year, c.set, c.num ? "#" + c.num : "", c.player, c.variation ? "(" + c.variation + ")" : ""].filter(Boolean).join(" ");
-const lotTagText = (c, a) => c.tagText || "All " + lotN(c) + " for " + (a != null ? money(a) : "a price to come");
+const lotTagText = (c, a) => (c.tagText || "All " + lotN(c) + " for " + (a != null ? money(a) : "a price to come")) + (c.shipped ? " shipped" : "");
 function priceComment(){
   if(S.settings.commentStyle === "lines") return priceCommentLines();
   const st = S.settings, items = ordered().filter(inSale);
@@ -1871,20 +1873,21 @@ function priceComment(){
   const block = c => {
     const a = priceOf(c);
     if(!c.isLot) return "- " + strike(`${lineName(c)}${hobbyShort(c) ? " (" + hobbyShort(c) + ")" : ""}${condShort(c) ? " - " + condShort(c) : ""} - **${c.tagText || money(a) || "price to come"}**`, c) + "\n";
+    if(plainLot(c)) return "\n" + strike(`**${c.player.replace(/\s*\(\d+ cards?\)$/, "")}, ${lotN(c)} cards${c.unique ? " (" + c.unique + " different)" : ""} - ${lotAsk(c)}**`, c) + "\n\n" + [c.highlights, c.condNote].filter(Boolean).join("\n\n") + "\n\n";
     const n = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, "");
     let t = "\n" + strike(`**${name}, ${lotN(c)} cards${c.unique ? " (" + c.unique + " different)" : ""} - ${lotTagText(c, a)}**`, c) + "\n\n";
     for(const m of c.members) t += `- ${lineName(m)}${hobbyShort(m) ? " (" + hobbyShort(m) + ")" : ""}${condShort(m) ? " - " + condShort(m) : ""}\n`;
     if(lotN(c) > n) t += `- plus ${lotN(c) - n} more cards not listed\n`;
     const grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
-    t += "\n" + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (hits.length
+    t += "\n" + (c.condNote ? c.condNote + " " : "") + (grades.length ? "Grades in this lot: " + grades.join(", ") + ". " : "") + (c.condNote || (!hits.length && !c.members.some(m => m.grade || m.flaws)) ? "" : hits.length
       ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"} worth knowing: ${hits.slice(0, 5).map(m => (c.members.every(x => x.player === m.player) ? [m.num ? "#" + m.num : "", m.variation].filter(Boolean).join(" ") || lineName(m) : m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
-      : "No creases, writing or paper loss that I can see.") + "\n\n";
+      : c.final ? "" : "No creases, writing or paper loss that I can see.") + "\n\n";
     const lh = lotHobby(c);
     if(lh.highs || lh.keys.length) t += [lh.highs ? `Includes ${plural(lh.highs, "high number", "high numbers")}.` : "", lh.keys.length ? "Key cards: " + lh.keys.slice(0, 10).map(x => x.label).join(", ") + "." : ""].filter(Boolean).join(" ") + "\n\n";
     return t;
   };
   let out = "";
-  for(const sec of commentSections(items)) out += `**${sec.name}**\n\n` + byYear(sec.items).map(([k, list]) => (k ? `*${k}*\n\n` : "") + list.map(block).join("")).join("\n") + "\n";
+  for(const sec of commentSections(items)) out += `**${sec.name}**\n\n` + secNote(sec.name) + byYear(sec.items).map(([k, list]) => (k ? `*${k}*\n\n` : "") + list.map(block).join("")).join("\n") + "\n";
   out += `**Payment:** ${st.pay}  \n**Shipping:** ${st.ship}\n\nAsks are firm. Condition is noted on every line and already priced in. Ask for more photos of anything before you claim.\n`;
   return out.replace(/\n{3,}/g, "\n\n");
 }
@@ -1893,6 +1896,7 @@ function commentPanel(){
   return `<div class="panel" id="pricecomment" data-jump="Price comment"><h2>Reddit price comment</h2>
     <p class="note">The whole sale in order: year, set, number and name, a short condition summary and the ask. Lots list every card, their grades and any issues. It updates whenever the sale changes.</p>
     ${photosWithCards().length ? `<label class="inline"><input type="checkbox" id="set-commentByPhoto" ${S.settings.commentByPhoto ? "checked" : ""}> Order by photo (photo 1 first, cards left to right)</label>` : ""}
+    <label class="inline"><input type="checkbox" id="set-commentByYear" ${S.settings.commentByYear === false ? "" : "checked"}> Group each section by year</label>
     <div class="row"><label class="inline">Layout <select id="set-commentStyle"><option value="list" ${S.settings.commentStyle !== "lines" ? "selected" : ""}>One line per card</option><option value="lines" ${S.settings.commentStyle === "lines" ? "selected" : ""}>Lot headers, prices on one line</option></select></label>
       <label class="inline">Take everything $<input class="money" id="set-takeAll" inputmode="decimal" value="${esc(S.settings.takeAll || "")}" placeholder="${roundP(ordered().filter(inSale).filter(c => c.status !== "sold").reduce((a, c) => a + (priceOf(c) || 0), 0) * .85) || ""}"> <span class="note">blank to leave out</span></label></div>
     <textarea id="out-comment" readonly style="min-height:320px">${esc(priceComment())}</textarea>
@@ -2274,7 +2278,7 @@ function photoStrip(){
 async function startOver(){
   const cards = cardTotal(S.cards.filter(c => !c.example)), photos = ui.photos || [];
   ui.undo = JSON.stringify(S);
-  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.imgSeen = []; S.photoNotes = []; S.goal = ""; S.settings.goalSkipped = false; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
+  S.cards = []; S.orders = {}; S.postedAt = null; S.plan = null; S.imgSeen = []; S.photoNotes = []; S.finalPrices = false; S.secNotes = {}; S.privateNotes = []; S.goal = ""; S.settings.goalSkipped = false; S.priceCheck = null; S.skipNext = {}; S.grpSkip = []; S.settings.title = "";
   ui.undoPhotos = photos; ui.undoPhotosFor = ui.undo;
   for(const x of photos) await idb("del", x.id);
   ui.photos = []; ui.photo = null; ui.sel.clear(); ui.copyOpts = null; ui.clearOpen = false; ui.photoInstr = ""; ui.listText = "";
@@ -2349,7 +2353,7 @@ function hobbyFor(c){
   for(const x of S.hobbyNotes || []) if(x.num && String(x.year) === String(c.year || "") && (!x.set || hnorm(c.set).startsWith(hnorm(x.set))) && String(x.num) === String(n)) out.push({k:"note", t:x.text});
   return out;
 }
-function hobbyShort(c){ const h = hobbyFor(c); return [h.some(x => x.k === "rc") ? "RC" : "", h.some(x => x.k === "high") ? "high number" : ""].filter(Boolean).join(", "); }
+function hobbyShort(c){ const h = hobbyFor(c); return [h.some(x => x.k === "rc") && !/\bRC\b|rookie/i.test(c.variation || "") ? "RC" : "", h.some(x => x.k === "high") ? "high number" : ""].filter(Boolean).join(", "); }
 function lotHobby(lot){
   const keys = [], stars = [], seen = new Set(); let highs = 0;
   for(const m of lot.members || []){
@@ -2454,10 +2458,12 @@ function knowPanel(){
 
 /* ---------- the year-lot layout: one header per lot with its count and price, prices on one line ---------- */
 function lotCond(c){
+  if(c.condNote) return c.condNote;
+  if(!c.members.some(m => m.grade || m.flaws)) return "";
   const n = c.members.length, grades = [...new Set(c.members.map(m => String(m.grade || "").replace(/^raw\s+/i, "")).filter(Boolean))], hits = c.members.filter(m => issuesOf(m).length);
   return (grades.length ? (grades.length <= 3 ? grades.join(" to ") : "Mixed condition") + ". " : "") + (hits.length
     ? `${hits.length} of ${n} ${hits.length === 1 ? "has an issue" : "have issues"}: ${hits.slice(0, 5).map(m => (m.player || lineName(m)) + " (" + issuesOf(m)[0].replace(/^./, ch => ch.toLowerCase()) + ")").join("; ")}${hits.length > 5 ? "; more in the photos" : ""}.`
-    : "No creases, writing or paper loss that I can see.");
+    : c.final ? "" : "No creases, writing or paper loss that I can see.");
 }
 function priceCommentLines(){
   const st = S.settings, items = ordered().filter(inSale), low = s => s.replace(/^./, ch => ch.toLowerCase());
@@ -2468,14 +2474,15 @@ function priceCommentLines(){
   let out = `${plural(cardTotal(items), "card", "cards")}${years.length ? ", " + Math.min(...years) + (Math.max(...years) > Math.min(...years) ? " to " + Math.max(...years) : "") : ""}${items.some(c => c.isLot) && items.some(c => !c.isLot) ? ", priced by card with lot prices on the groups" : items.some(c => c.isLot) ? ", sold as lots" : ""}.\n\n`;
   if(take > 0) out += `**TAKE EVERYTHING: ${money(take)} shipped**\n\n`;
   for(const sec of commentSections(items)){
-    out += `**${sec.name}**\n\n`;
+    out += `**${sec.name}**\n\n` + secNote(sec.name);
     for(const [k, list] of byYear(sec.items)){
       if(k) out += `*${k}*\n\n`;
       const singles = list.filter(c => !c.isLot);
       if(singles.length) out += singles.map(c => strike(`${c.year && !k ? c.year + " " : ""}${c.player || lineName(c)}${extra(c)} ${c.tagText || money(priceOf(c)) || "price to come"}`, c)).join(" · ") + "\n\n";
       for(const c of list.filter(x => x.isLot)){
+        if(plainLot(c)){ out += strike(`**${c.player.replace(/\s*\(\d+ cards?\)$/, "")} | ${lotN(c)} cards${c.unique ? ", " + c.unique + " different" : ""} | ${lotAsk(c)}**`, c) + "\n\n" + [c.highlights, c.condNote].filter(Boolean).join("\n\n") + "\n\n"; continue; }
         const n = lotN(c), shown = c.members.length, name = c.player.replace(/\s*\(\d+ cards?\)$/, ""), lh = lotHobby(c), same = c.members.every(m => String(m.year) === String(c.members[0].year));
-        out += strike(`**${name} | ${n} cards${c.unique ? ", " + c.unique + " different" : ""} | ${c.tagText || money(priceOf(c)) || "price to come"}${c.splitOk ? "" : " (lot only)"}**`, c) + "\n\n";
+        out += strike(`**${name} | ${n} cards${c.unique ? ", " + c.unique + " different" : ""} | ${lotAsk(c)}${c.splitOk ? "" : " (lot only)"}**`, c) + "\n\n";
         out += lotCond(c) + (lh.highs ? ` Includes ${plural(lh.highs, "high number", "high numbers")}.` : "") + "\n\n";
         if(lh.keys.length || lh.stars.length) out += "Key cards: " + [...lh.keys.map(x => x.label), ...lh.stars].slice(0, 12).join(", ") + "\n\n";
         if(c.splitOk) out += c.members.map(m => `${m.player || lineName(m)}${same ? "" : yy(m.year)}${extra(m)} ${money(priceOf(m)) || ""}`.trim()).join(" · ") + (n > shown ? ` · plus ${n - shown} more` : "") + "\n\n";
@@ -2561,6 +2568,7 @@ function yearOf(c){
   return y && list.every(m => String(m.year) === String(y) && String(m.set || "") === String(s || "")) ? [y, s].filter(Boolean).join(" ") : "";
 }
 function byYear(list){
+  if(S.settings.commentByYear === false) return [["", list]];
   const keys = [...new Set(list.map(yearOf))];
   if(keys.filter(Boolean).length < 2) return [["", list]];
   return keys.sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b)).map(k => [k || "Mixed years", list.filter(c => yearOf(c) === k)]);
@@ -3013,6 +3021,86 @@ function importPanel(){
   </div>`;
 }
 
+/* ---------- import a final price list: a written-up sale becomes the sale, checked against its own totals ---------- */
+const secNote = name => { const n = (S.secNotes || {})[name]; return n ? `*${n}*\n\n` : ""; };
+const lotAsk = c => (c.tagText || money(priceOf(c)) || "price to come") + (c.shipped ? " shipped" : "");
+const plainLot = c => c.isLot && (!!c.highlights || !c.members.length);
+function handoffStats(h, text){
+  const secs = (h.sections || []).map(s => { let ask = 0, cards = 0, items = 0;
+    for(const it of s.items || []){ items++; if(it.kind === "lot"){ ask += Number(it.price) || 0; cards += Number(it.count) || (it.cards || []).length; } else { const q = Number(it.qty) || 1; ask += (Number(it.price) || 0) * q; cards += q; } }
+    return {name:s.name, items, cards, ask}; });
+  const ask = secs.reduce((a, s) => a + s.ask, 0), cards = secs.reduce((a, s) => a + s.cards, 0), warn = [];
+  if(h.totals && Number(h.totals.ask) > 0 && Number(h.totals.ask) !== ask) warn.push(`The document says ${money(Number(h.totals.ask))} in all, and what was read adds up to ${money(ask)}. Check for a missed or doubled line.`);
+  if(h.totals && Number(h.totals.cards) > 0 && Number(h.totals.cards) !== cards) warn.push(`The document says ${h.totals.cards} cards, and what was read adds up to ${cards}.`);
+  if(text){ const miss = []; for(const s of h.sections || []) for(const it of s.items || []){ const p = Number(it.price); if(p > 0 && !new RegExp("\\$\\s*" + p + "(?![\\d.])").test(text) && !new RegExp("\\$\\s*" + p * (Number(it.qty) || 1) + "(?![\\d.])").test(text)) miss.push(`${it.name || it.player} ${money(p)}`); }
+    if(miss.length) warn.push(`These prices do not appear in the document as written: ${miss.slice(0, 8).join("; ")}.`); }
+  const noPrice = (h.sections || []).flatMap(s => s.items || []).filter(it => !(Number(it.price) > 0)).length;
+  if(noPrice) warn.push(`${plural(noPrice, "item has", "items have")} no price.`);
+  return {secs, ask, cards, warn};
+}
+async function readHandoff(text){
+  text = String(text || "").trim().slice(0, 60000); if(!text){ ui.hoMsg = "Paste the document or open the file first."; return render(); }
+  let h = null;
+  try{ const j = JSON.parse(text); if(j && Array.isArray(j.sections)) h = j; }catch(e){}
+  if(!h){
+    if(!cap.ai){ ui.hoMsg = aiOff(); return render(); }
+    ui.busy = "Reading the price list. A long one takes a minute or two."; ui.hoMsg = ""; render();
+    try{ h = await ai("handoff", {text}); }catch(e){ ui.hoMsg = "It could not be read: " + (e && (e.message || e.code) || "unknown error"); }
+    ui.busy = "";
+  }
+  if(h && Array.isArray(h.sections) && h.sections.length){ ui.handoff = h; ui.hoStats = handoffStats(h, /^\s*\{/.test(text) ? "" : text); ui.hoMsg = ""; }
+  else if(!ui.hoMsg) ui.hoMsg = "No sections with prices were found in that.";
+  render();
+}
+function applyHandoff(mode){
+  const h = ui.handoff; if(!h) return;
+  ui.undo = JSON.stringify(S);
+  const dn = v => String(v ?? "").trim().toLowerCase(), old = allCards().map(x => x.c), used = new Set();
+  const twin = c => { const m = old.find(o => !used.has(o) && dn(o.year) === dn(c.year) && dn(o.set) === dn(c.set) && ((c.num && dn(o.num) === dn(c.num)) || (!c.num && dn(o.player) === dn(c.player)))); if(m) used.add(m); return m; };
+  const mk = (it, sec, extra) => { const t = twin(it), cond = String(it.condition || "");
+    return {id:uid(), status:"open", year:it.year ?? "", set:it.set ?? "", num:String(it.num ?? ""), player:it.player || "Card", variation:it.variation || "", grade:it.grade || "", flaws:cond, flawsAI:cond, flawsOk:true, idOk:true, conf:1, needsBack:false, comp:null,
+      aiLow:t ? t.aiLow ?? null : null, aiHigh:t ? t.aiHigh ?? null : null, valueWhy:t ? t.valueWhy || "" : "", src:t ? t.src : undefined, ctxNote:t ? t.ctxNote : undefined,
+      condLog:[...(t && t.condLog || []), {at:Date.now(), src:"final price list", grade:it.grade || "", notes:cond}], note:it.private || "", where:"from your final price list", section:sec, manual:true, dupOk:true, final:true, ...extra}; };
+  const out = [], names = [], notes = {};
+  for(const s of h.sections){
+    const sec = String(s.name || "Cards"); names.push(sec); if(s.note) notes[sec] = String(s.note);
+    for(const it of s.items || []){
+      if(it.kind === "lot"){
+        const members = (it.cards || []).map(c => mk(c, sec, {pin:"lot", price:null})), n = Math.max(Number(it.count) || 0, members.length);
+        out.push({id:uid(), status:"open", isLot:true, manual:true, members, section:sec, year:"", set:"", num:"", player:`${it.name || "Lot"} (${n} cards)`, grade:"", flaws:"", conf:1, comp:null, price:Number(it.price) || null, fixed:true, count:n, countSet:true,
+          final:true, shipped:!!it.shipped, highlights:String(it.highlights || ""), condNote:String(it.condition || ""), note:it.private || "", why:"From your final price list."});
+      } else for(let q = 0; q < (Number(it.qty) || 1); q++) out.push(mk(it, sec, {pin:Number(s.perCard) > 0 ? "page" : "single", price:Number(it.price) || null}));
+    }
+  }
+  const keep = mode === "add" ? S.cards.filter(c => !c.example) : S.cards.filter(c => !c.example && c.status !== "open");
+  S.cards = [...out, ...keep];
+  const prev = mode === "add" && S.plan ? S.plan.sections : [];
+  S.plan = {text:"Final price list, imported", sections:[...names, ...prev.filter(x => !names.includes(x))], photos:(h.photos || []).map(String), gaps:[]};
+  S.secNotes = mode === "add" ? {...(S.secNotes || {}), ...notes} : notes;
+  S.privateNotes = (h.privateNotes || []).map(String); S.finalPrices = true; S.priceCheck = null;
+  const st = S.settings; if(h.pay) st.pay = String(h.pay); if(h.ship) st.ship = String(h.ship); if(h.title) st.title = String(h.title); if(h.intro) st.intro = String(h.intro);
+  st.commentByYear = false; st.commentByPhoto = false; st.commentStyle = "list"; st.sort = "added";
+  if(!S.goal) S.goal = "Final price list, imported.";
+  const k = ui.hoStats; ui.handoff = null; ui.hoOpen = false; ui.hoText = "";
+  ui.cmdMsg = `Imported ${plural(out.length, "item", "items")}: ${k.cards} cards, ${money(k.ask)} asking${used.size ? `. ${plural(used.size, "card", "cards")} matched ones you had and kept their photo link and condition record` : ""}. The post and price comment are ready on the Post tab. Undo brings back what was there.`;
+  save(); go("#sale");
+}
+function handoffPanel(){
+  if(!ui.hoOpen) return "";
+  const h = ui.handoff, k = ui.hoStats, mine = S.cards.filter(c => !c.example && c.status === "open").length;
+  return `<div class="panel pick" id="handoffpanel"><div class="row" style="justify-content:space-between"><h2>Import a final price list</h2><button class="small" data-act="hoClose">Close</button></div>
+    ${h ? `<p><strong>${k.secs.reduce((a, s) => a + s.items, 0)} items · ${k.cards} cards · ${money(k.ask)} asking</strong></p>
+      <ul class="chg">${k.secs.map(s => `<li>${esc(s.name)}: ${plural(s.items, "item", "items")}, ${plural(s.cards, "card", "cards")}, ${money(s.ask) || "$0"}</li>`).join("")}</ul>
+      ${k.warn.length ? `<p class="flag">${k.warn.map(esc).join(" ")}</p>` : `<p class="note">The totals match the document${h.totals && h.totals.ask ? ` (${money(Number(h.totals.ask))}, ${h.totals.cards} cards)` : ""}.</p>`}
+      <p class="note">Prices come in exactly as written and count as final, so the tool will not suggest re-pricing. ${(h.privateNotes || []).length ? plural(h.privateNotes.length, "private note is", "private notes are") + " kept on the Sale tab and never go in the post. " : ""}Everything stays editable after.</p>
+      <div class="row"><button class="primary" data-act="hoApply" data-m="replace">${mine ? `Replace my ${mine} open items with this` : "Use this as my sale"}</button>${mine ? `<button class="small" data-act="hoApply" data-m="add">Add it alongside them</button>` : ""}<button class="small" data-act="hoAgain">Read something else</button></div>`
+    : `<p class="note">Have a finished write-up of the sale, from ChatGPT or your own notes? Paste it or open the file. The tool reads the sections, every card and lot with its price, quantity, condition and highlights, keeps private notes private, checks the totals, and builds the sale, the post and the price comment from it.</p>
+      <textarea id="hotext" style="min-height:140px" placeholder="Paste the document here">${esc(ui.hoText || "")}</textarea>
+      <div class="row"><button class="small primary" data-act="hoRead" ${ui.busy ? "disabled" : ""}>Read it</button><input type="file" id="hofile" accept=".md,.txt,.json,text/plain,text/markdown,application/json" hidden><button class="small" data-act="hoPick" ${ui.busy ? "disabled" : ""}>Open a file</button></div>
+      ${ui.busy ? `<p class="progress busy">${esc(ui.busy)}</p>` : ui.hoMsg ? `<p class="flag">${esc(ui.hoMsg)}</p>` : ""}`}
+  </div>`;
+}
+
 /* ---------- render + events ---------- */
 const VIEWS = {inventory:vInventory, sale:vSale, post:vPostAll, photos:vPhotos, claims:vClaims, sold:vSold, ship:vShip, grade:vGrade, radar:vRadar};
 function render(){
@@ -3022,7 +3110,7 @@ function render(){
   const ns = $("#n-sale"); if(ns) ns.textContent = S.cards.filter(inSale).length || "";
   $("#n-claims").textContent = S.cards.filter(c => c.status === "claimed").length || "";
   S.cards.forEach(c => { if(c.status === "open" && !c.isLot && c.pin === "single" && !c.section){ c.section = "Singles"; ensureSection("Singles"); } });
-  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + viewerBox() + goalPanel() + progressBar() + clearPanel() + importPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
+  $("#main").innerHTML = `<div id="jumpbar" class="jumpbar"></div>` + viewerBox() + goalPanel() + progressBar() + clearPanel() + importPanel() + handoffPanel() + (name === "photos" && ui.photo ? "" : cmdBar()) + VIEWS[name]();
   stat(); buildJump();
   if(name === "photos") drawPhoto();
   renderAuth();
@@ -3101,6 +3189,12 @@ document.addEventListener("click", async e => {
   else if(act === "useHist" && c){ c.price = Number(el.dataset.v); }
   else if(act === "psave") return savePhoto();
   else if(act === "startOver") return startOver();
+  else if(act === "hoOpen"){ ui.hoOpen = true; ui.handoff = null; go(location.hash || "#inventory", () => { const t = $("#handoffpanel"); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
+  else if(act === "hoClose"){ ui.hoOpen = false; ui.handoff = null; }
+  else if(act === "hoAgain"){ ui.handoff = null; }
+  else if(act === "hoPick") return $("#hofile").click();
+  else if(act === "hoRead") return readHandoff(ui.hoText);
+  else if(act === "hoApply") return applyHandoff(el.dataset.m);
   else if(act === "exportMd") return downloadMd();
   else if(act === "importOpen"){ ui.importOpen = true; ui.importRows = null; go(location.hash || "#inventory", () => { const t = $("#importpanel"); if(t) t.scrollIntoView({behavior:"smooth"}); }); return; }
   else if(act === "importClose"){ ui.importOpen = false; ui.importRows = null; }
@@ -3298,6 +3392,10 @@ document.addEventListener("change", e => {
   if(t.id === "importfile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.importText = x.slice(0, 400000); ui.importRows = parseImport(ui.importText); render(); }); return; }
   if(t.dataset.imp && ui.importRows){ const r = ui.importRows[+t.dataset.imp]; if(r) r.on = t.checked; return render(); }
   if(t.dataset.impv && ui.importRows){ const r = ui.importRows[+t.dataset.impv], v = numOrNull(t.value); if(r && v > 0){ r.neu = v; r.on = true; } return render(); }
+  if(t.id === "hotext"){ ui.hoText = t.value; return; }
+  if(t.id === "hofile"){ const f = t.files[0]; t.value = ""; if(f) f.text().then(x => { ui.hoText = x.slice(0, 60000); readHandoff(ui.hoText); }); return; }
+  if(t.dataset.shipped){ const f = findCard(t.dataset.shipped); if(f){ f.c.shipped = t.checked; save(); } return render(); }
+  if(t.dataset.secnote != null){ S.secNotes = {...(S.secNotes || {}), [t.dataset.secnote]:t.value.trim()}; save(); return render(); }
   if(t.dataset.lc){ const f = findCard(t.dataset.lid); if(f && f.c.isLot){ const v = numOrNull(t.value), k = t.dataset.lc; f.c[k] = v > 0 ? (k === "extraEach" ? v : Math.round(v)) : null; f.c.countSet = true; relot(f.c); if(ui.photo && ui.photo.cards) relabel(); save(); } return render(); }
   if(t.dataset.gc && ui.photo){ const g = ui.photo.groups.find(x => x.id === t.dataset.gc); if(g){ setGroupCount(g, numOrNull(t.value)); relabel(); save(); } return render(); }
   if(t.dataset.yc){ (ui.yc = ui.yc || {})[t.dataset.yc] = t.value; return; }
@@ -3345,7 +3443,7 @@ document.addEventListener("change", e => {
   save(); render();
 });
 
-document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "importtext") ui.importText = e.target.value; else if(e.target.id === "ovtext") ui.ovText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
+document.addEventListener("input", e => { if(e.target.id === "cmd") ui.cmd = e.target.value; else if(e.target.dataset && e.target.dataset.rq){ const q = ui.rq[e.target.dataset.rq]; if(q) q.note = e.target.value; } else if(e.target.dataset && e.target.dataset.gp) ui.grpPrice[e.target.dataset.gp] = e.target.value; else if(e.target.id === "pinstr") ui.photoInstr = e.target.value; else if(e.target.id === "plisttext") ui.listText = e.target.value; else if(e.target.id === "pagename") ui.pageName = e.target.value; else if(e.target.id === "wanttext") ui.wantText = e.target.value; else if(e.target.id === "importtext") ui.importText = e.target.value; else if(e.target.id === "hotext") ui.hoText = e.target.value; else if(e.target.id === "ovtext") ui.ovText = e.target.value; else if(e.target.id === "goaltext") ui.goalDraft = e.target.value; else if(e.target.id === "knowpost") ui.knowPost = e.target.value; else if(e.target.id === "knowmiss") ui.knowMiss = e.target.value; else if(e.target.id === "knowy") ui.knowY = e.target.value; else if(e.target.id === "knows") ui.knowS = e.target.value; else if(e.target.id === "known") ui.knowN = e.target.value; else if(e.target.id === "knowt") ui.knowT = e.target.value; else if(e.target.id === "paskval") ui.photoAsk = e.target.value; else if(e.target.id === "ptagtext") ui.photoText = e.target.value; else if(e.target.id === "ptagsize" && ui.photo){ ui.photo.scale = Number(e.target.value); drawPhoto(); const n = e.target.parentNode.querySelector(".note"); if(n) n.textContent = Math.round(ui.photo.scale * 100) + "%"; } });
 document.addEventListener("click", e => { const sm = e.target.closest && e.target.closest("summary"), d = sm && sm.parentElement; if(d && d.dataset && d.dataset.dk) ui.dopen[d.dataset.dk] = !d.open; }, true);
 document.addEventListener("keydown", e => { if(e.target.id === "pinstr" && e.key === "Enter"){ e.preventDefault(); ui.photoInstr = e.target.value; photoInstr(); return; } if(e.target.id === "cmd" && e.key === "Enter"){ e.preventDefault(); ui.cmd = e.target.value; runCmd(); } });
 loadLocal(); purgeAddresses(); render(); loadPhotos(); init(makeSupabase);

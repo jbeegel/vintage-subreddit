@@ -1,6 +1,6 @@
 /** Prompts live on the server so the AI route cannot be used as a general-purpose proxy. */
 
-export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost" | "backnums" | "lotprice";
+export type Task = "scan" | "claims" | "grade" | "plan" | "edit" | "extract" | "back" | "recheck" | "locate" | "phototag" | "pricecheck" | "postcopy" | "pricelist" | "learnpost" | "backnums" | "lotprice" | "handoff";
 
 export function scanPrompt(n: number, video: boolean, tiled: boolean): string {
   const what = video
@@ -333,6 +333,32 @@ ${web ? "- Search for recent sold lots of this year and set on eBay with a simil
 
 Return JSON only, at the very end of your answer: {"price":185,"low":160,"high":215,"perCommon":0.35,"breakdown":[{"label":"About 230 commons at $0.35","amount":80},{"label":"Stars: Aaron, Mays, Gibson","amount":65},{"label":"Key cards: Reggie Jackson rookie","amount":45},{"label":"Set builder premium, about 40% of the set","amount":10}],"pullOut":["#260 Reggie Jackson rookie would sell better alone, at about $110"],"why":"two or three plain sentences","evidence":[{"source":"eBay sold","price":175,"note":"1969 Topps lot, 150 cards, VG","url":"https://..."}]}
 Round the price the way sellers do: $5 steps. Never suggest leaving room for offers.`;
+}
+
+export function handoffPrompt(text: string): string {
+  return `A vintage baseball card seller has a finished price list for a sale on r/baseballcards_vintage, written up as a document. Turn it into structured data for their sale tool. The prices are final: copy every price, quantity and card detail exactly, and never add, drop, merge or reprice anything.
+
+The document:
+"""${text}"""
+
+Return JSON only, in this shape:
+{"title":"[FS] ...","intro":"two or three plain sentences in the seller's own voice (I), no offers","pay":"...","ship":"...",
+ "sections":[{"name":"short public heading","note":"one public line that applies to the whole section, such as a bundle price or shipping, or empty","perCard":null,
+   "items":[
+     {"kind":"single","year":1969,"set":"Topps","num":"260","player":"Reggie Jackson","variation":"","grade":"","condition":"buyer-facing condition note","price":90,"qty":1,"private":""},
+     {"kind":"lot","name":"1969 Topps","count":120,"price":60,"shipped":true,"highlights":"public sentence or list of the notable cards","condition":"public condition summary or empty","cards":[],"private":""}
+   ]}],
+ "photos":["Photo 1: file name, what it shows"],"privateNotes":["..."],"totals":{"ask":1294,"cards":1588}}
+
+Rules:
+- Keep the document's order of sections and items. One item per priced thing. A row with quantity 2 at a per-card price is one single with "qty":2.
+- "perCard": set it on a section where every card has the same per-card price (a price page); also give each single that price.
+- "player" is the name or card title only; rookie, subset and position notes go in "variation". "num" is the card number without the # sign. "grade" only when the document gives one (a slab grade or a stated grade).
+- "condition" and "highlights" are public: plain, buyer-facing, no instructions to the seller. Anything the document marks as not public, any note to verify something, any internal reasoning, comparisons to earlier sales, and photo-handling instructions go in "private" on the item or in "privateNotes", never in public fields. If the document says a named card is unverified, leave that name out of "highlights" and say so in "private".
+- "shipped": true when the price includes shipping.
+- A lot's "cards" lists its individual cards only when the document lists them all (a small lot); otherwise leave it empty and use "count" and "highlights".
+- "photos": the source photos in posting order with what each shows, from the document.
+- "totals": the document's own stated grand totals, or null where it gives none.`;
 }
 
 export const gradePrompt = `Estimate the grade a third-party grader would give this vintage baseball card, on the PSA 1 to 10 scale (half grades allowed), from this one photo of its front. The holder's label has been cropped out, so judge only the card. Assess centering (estimate left/right and top/bottom ratios), corners, edges and surface. The card may be inside a plastic holder: ignore glare and scratches that sit on the holder. Most graded vintage is low or mid grade, so do not assume a high grade. Give your single best grade and the range you would bet on.

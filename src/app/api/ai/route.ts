@@ -1,12 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config, db, fail, getCaller } from "@/lib/server/auth";
-import { lotPricePrompt, backNumsPrompt, backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
+import { handoffPrompt, lotPricePrompt, backNumsPrompt, backPrompt, claimsPrompt, locatePrompt, photoTagPrompt, learnPostPrompt, postCopyPrompt, priceCheckPrompt, priceListPrompt, withReference, recheckPrompt, editPrompt, extractPrompt, gradePrompt, parseJson, planPrompt, scanPrompt, type Task } from "@/lib/server/prompts";
 
 export const maxDuration = 300;
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 2_000_000;
-const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost", "backnums", "lotprice"];
+const TASKS: Task[] = ["scan", "claims", "grade", "plan", "edit", "extract", "back", "recheck", "locate", "phototag", "pricecheck", "postcopy", "pricelist", "learnpost", "backnums", "lotprice", "handoff"];
 
 export async function POST(req: Request) {
   if (!config.hasAiKey) return fail(503, "AI features are not set up on this server yet.", "not_configured");
@@ -36,6 +36,11 @@ export async function POST(req: Request) {
   if (task === "scan") prompt = scanPrompt(images.length, payload.video === true, payload.tiled === true);
   else if (task === "grade") prompt = gradePrompt;
   else if (task === "back") prompt = backPrompt(payload.front ?? {});
+  else if (task === "handoff") {
+    const doc = String(payload.text ?? "").slice(0, 60000);
+    if (doc.trim().length < 40) return fail(400, "Paste the price list first.");
+    prompt = handoffPrompt(doc);
+  }
   else if (task === "lotprice") {
     if (!payload.lot || typeof payload.lot !== "object") return fail(400, "Send the lot to price.");
     prompt = lotPricePrompt(payload.lot, Math.min(60, Math.max(0, Number(payload.discount) || 0)), true);
