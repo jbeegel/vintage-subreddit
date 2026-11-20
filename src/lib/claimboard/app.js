@@ -1379,8 +1379,7 @@ function fitText(g, text, x, y, maxW, px, weight){
 function drawPhoto(cvArg, phArg){
   const ph = phArg || ui.photo, cv = cvArg || $("#pcanvas"); if(!ph || !cv) return;
   const capOn = !!String(ph.caption || "").trim(), cu = Math.max(ph.w, ph.h) / 100, cg = document.createElement("canvas").getContext("2d");
-  const cstamp = [S.settings.handle ? "u/" + String(S.settings.handle).replace(/^u\//, "") : "", new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})].filter(Boolean).join(" · ");
-  const cl = capOn ? [...capLines(cg, ph.caption, ph.w - 4 * cu, cu), {t:cstamp, size:2.1 * cu, weight:500, dim:true}] : [], band = capOn ? Math.round(cl.reduce((a, l) => a + l.size * 1.35, 0) + 3 * cu) : 0;
+  const cl = capOn ? capLines(cg, ph.caption, ph.w - 4 * cu, cu) : [], band = capOn ? Math.round(cl.reduce((a, l) => a + l.size * 1.35, 0) + 3 * cu) : 0;
   cv.width = ph.w; cv.height = ph.h + band;
   const g = cv.getContext("2d"), u = Math.max(ph.w, ph.h) / 100, pad = 1.6 * u;
   g.drawImage(ph.bmp, 0, 0, ph.w, ph.h); g.textBaseline = "top";
@@ -1396,10 +1395,6 @@ function drawPhoto(cvArg, phArg){
     if(ph.title) fitText(g, ph.title, pad, pad, ph.w - 2 * pad, hT, 800);
     if(ph.note) fitText(g, ph.note, pad, pad + hT + (hT ? .8 * u : 0), ph.w - 2 * pad, hN, 500);
   }
-  const stamp = [S.settings.handle ? "u/" + String(S.settings.handle).replace(/^u\//, "") : "", new Date().toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})].filter(Boolean).join(" · ");
-  g.font = `600 ${2.4 * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
-  const sw = g.measureText(stamp).width + 2 * u, sh = 4 * u;
-  g.fillStyle = "rgba(10,18,15,.84)"; g.fillRect(ph.w - sw, ph.h - sh, sw, sh); g.fillStyle = "#fff"; g.fillText(stamp, ph.w - sw + u, ph.h - sh + .8 * u);
   for(const t of ph.tags){
     const s = (t.s || 3) * tagScale(ph), k = s / 3, col = TAG_COLORS[tagColor(ph)];
     g.font = `800 ${s * u}px Archivo, "Arial Narrow", Arial, sans-serif`;
@@ -1491,13 +1486,11 @@ function vPhotos(){
         <button class="small" data-act="ptagUndo" ${ph.tags.length ? "" : "disabled"}>Undo last tag</button><button class="small" data-act="ptagClear" ${ph.tags.length ? "" : "disabled"}>Clear tags</button></div>
       <p class="note">${photoQueue().length ? (ph.qi < photoQueue().length ? `Tap each card in price-list order: ${ph.qi} of ${photoQueue().length} placed. The tag fills in by itself, or type your own.` : "Every item in this section has a tag. Type your own to add more.") : "Type a tag, then tap where it goes."} While this is open, a tap on the photo places a tag.</p></details>
     <details class="more" ${dk("plook", false)}><summary>Tag size and color</summary>${styleRow(ph)}</details>
-    <details class="more" ${dk("phead", false)}><summary>Headline, second line and username stamp</summary><div class="two">
+    <details class="more" ${dk("phead", false)}><summary>Headline and second line</summary><div class="two">
       <label>This photo shows<select id="ph-target">${ts.map(t => `<option value="${esc(t.key)}" ${t.key === ph.key ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
-      <label>Your Reddit username, for the stamp<input id="set-handle" value="${esc(S.settings.handle || "")}" placeholder="username"></label>
       <label>Headline<input id="ph-title" value="${esc(ph.title)}" placeholder="$10 PER CARD"></label>
       <label>Second line<input id="ph-note" value="${esc(ph.note)}" placeholder="Claim by number"></label>
-    </div></details>
-    <p class="note">A typed username and date may not count as proof of possession on every subreddit. Keep a handwritten note in the shot until the mods confirm a printed stamp is accepted.</p>` : ""}
+    </div></details>` : ""}
   </div></section>`;
 }
 
@@ -3153,7 +3146,7 @@ function capLines(g, text, maxW, u){
 function captionBox(ph){
   const opts = capOptions();
   return `<div class="say"><label for="ph-caption"><strong>Caption under the photo</strong></label>
-    <span class="note">Goes in a band added below the picture, with your username and the date. Nothing is drawn on the cards.${ph.caption ? " Price tags on the cards are off while a caption is set." : ""}</span>
+    <span class="note">Goes in a band added below the picture. Nothing is drawn on the cards, and no username or date is added: those stay on your handwritten note.${ph.caption ? " Price tags on the cards are off while a caption is set." : ""}</span>
     ${opts.length ? `<select id="ph-capfrom"><option value="">Fill it from my sale…</option>${opts.map(o => `<option value="${esc(o.k)}">${esc(o.label)}</option>`).join("")}</select>` : ""}
     <textarea id="ph-caption" style="min-height:70px;font-family:var(--body)" placeholder="1968 Topps | 20 cards | $20 shipped">${esc(ph.caption || "")}</textarea>
     ${(ui.photos || []).length > 1 && S.cards.some(c => c.isLot && c.note) ? `<div class="row"><button class="small" data-act="capAll">Caption every photo from my price list</button></div>` : ""}</div>`;
